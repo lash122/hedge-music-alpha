@@ -3,8 +3,8 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Hedge Music — Admin</title>
-<link rel="stylesheet" href="music.css?v=27">
+<title>Hedge Music — Admin (Cloudflare)</title>
+<link rel="stylesheet" href="music.css?v=cf1">
 <style>
 .admin-wrap{max-width:1100px;margin:16px auto;padding:0 16px 40px}
 .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin:14px 0}
@@ -20,7 +20,7 @@
 </head>
 <body>
 <header class="topbar">
-  <div class="brand"><span class="brand-text">HEDGE MUSIC • ADMIN</span></div>
+  <div class="brand"><span class="brand-text">HEDGE MUSIC • ADMIN (CF)</span></div>
   <div class="top-actions">
     <a href="music.html" class="btn btn-ghost" style="text-decoration:none">← Library</a>
     <span id="auth-area" class="auth-area"></span>
@@ -35,7 +35,6 @@
     <div id="gate-msg" style="margin-top:10px;color:var(--text-secondary);font-size:13px"></div>
     <div id="gate-actions" style="margin-top:12px;display:flex;gap:8px"></div>
   </div>
-
   <div id="dash" style="display:none">
     <div class="kpis" id="kpis"></div>
     <div class="card" style="padding:14px;overflow:auto;margin-bottom:12px">
@@ -48,33 +47,33 @@
     <div style="display:grid;grid-template-columns:1fr;gap:12px">
       <div class="card" style="padding:14px;overflow:auto">
         <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:8px">
-          <h3 style="font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:var(--text-secondary)">Top tracks (plays/views)</h3>
+          <h3 style="font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:var(--text-secondary)">Top tracks</h3>
           <button id="refresh-btn" class="btn btn-ghost" style="padding:6px 10px">↺ Refresh</button>
         </div>
         <table class="table"><thead><tr><th>Track</th><th>Artist</th><th>Extractor</th><th>Plays</th><th>Views</th><th>Queues</th><th></th></tr></thead><tbody id="leader-body"><tr><td colspan="7" style="color:var(--text-tertiary)">loading…</td></tr></tbody></table>
       </div>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px" id="two-col">
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
         <div class="card" style="padding:14px;overflow:auto">
           <h3 style="font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:var(--text-secondary);margin-bottom:8px">Recent events</h3>
           <table class="table"><thead><tr><th>When</th><th>Event</th><th>Track</th><th>User</th></tr></thead><tbody id="events-body"><tr><td colspan="4" style="color:var(--text-tertiary)">loading…</td></tr></tbody></table>
         </div>
         <div class="card" style="padding:14px;overflow:auto">
-          <h3 style="font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:var(--text-secondary);margin-bottom:8px">Queue health (pending/error)</h3>
+          <h3 style="font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:var(--text-secondary);margin-bottom:8px">Queue health</h3>
           <table class="table"><thead><tr><th>URL</th><th>Status</th><th>Error</th><th>When</th></tr></thead><tbody id="queue-body"><tr><td colspan="4" style="color:var(--text-tertiary)">loading…</td></tr></tbody></table>
         </div>
       </div>
       <div class="card" style="padding:14px">
         <h3 style="font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:var(--text-secondary);margin-bottom:8px">Setup</h3>
-        <p class="sub" style="margin:0">Seed admin: in Supabase SQL Editor run<br><code>insert into public.admin_users(user_id) select id from auth.users where email='you@example.com' on conflict do nothing;</code><br>Then reload. Uses <code>public.is_admin()</code> + additive policies — no effect on <code>music.html</code> behavior.</p>
+        <p class="sub" style="margin:0">First login: click <code>Make me admin</code> below. Uses D1 <code>admin_users</code> + <code>approved_users</code>. No Supabase SQL needed.</p>
+        <button id="seed-admin" class="btn btn-main" style="margin-top:10px">Make me admin</button>
       </div>
     </div>
   </div>
 </div>
-
 <div id="auth-dialog" class="modal" style="display:none" role="dialog" aria-modal="true">
   <div class="modal-card">
     <h3>Log in (admin)</h3>
-    <p class="sub" style="margin-bottom:10px">Use your Supabase auth email. Must be in <code>admin_users</code>.</p>
+    <p class="sub" style="margin-bottom:10px">Use your Cloudflare D1 account. First user can seed admin.</p>
     <input id="auth-email" type="email" placeholder="Email" autocomplete="email" style="margin-bottom:8px">
     <input id="auth-pass" type="password" placeholder="Password" autocomplete="current-password" style="margin-bottom:10px">
     <div id="auth-error" class="status err" style="min-height:16px"></div>
@@ -83,24 +82,19 @@
   </div>
 </div>
 <div id="toast" role="status" aria-live="polite"></div>
-
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script>
 'use strict';
-const SUPABASE_URL='https://mgwaehtmdecvptzzigwv.supabase.co';
-const SUPABASE_ANON_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1nd2FlaHRtZGVjdnB0enppZ3d2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODc3Nzk4NjEsImV4cCI6MjEwMzM1NTg2MX0.iXHwe9wQgC_fHvOqh9TFRcJu9ypJpRdXVvOaKweGreQ';
-const sb=supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+async function api(path, opts={}){ const r=await fetch(path,{credentials:'include', headers:{'content-type':'application/json',...(opts.headers||{})}, ...opts}); const d=await r.json().catch(()=>({})); if(!r.ok) throw new Error(d.error||`HTTP ${r.status}`); return d; }
 const $=id=>document.getElementById(id);
 const esc=s=>String(s??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;');
 function toast(m){ const t=$('toast'); if(!t) return; t.textContent=m; t.classList.add('show'); t.style.display='block'; clearTimeout(toast._t); toast._t=setTimeout(()=>{t.classList.remove('show'); t.style.display='none';},2500); }
 let currentUser=null;
-function getInitial(e){ return (e||'?').trim().charAt(0).toUpperCase(); }
 function renderAuth(){
   const a=$('auth-area');
   if(!a) return;
   if(currentUser){
     a.innerHTML=`<span class="badge" title="${esc(currentUser.email)}">${esc(currentUser.email)}</span><button id="auth-logout" class="btn btn-ghost" style="padding:5px 10px">Log out</button>`;
-    $('auth-logout')?.addEventListener('click', async()=>{ await sb.auth.signOut(); });
+    $('auth-logout')?.addEventListener('click', async()=>{ await api('/api/auth',{method:'POST', body:JSON.stringify({action:'logout'})}); location.reload(); });
   } else {
     a.innerHTML=`<button id="auth-open" class="btn btn-ghost">Log in</button>`;
     $('auth-open')?.addEventListener('click', ()=> showAuth());
@@ -114,200 +108,100 @@ $('auth-login')?.addEventListener('click', async()=>{
   const email=$('auth-email').value.trim(), pass=$('auth-pass').value;
   if(!email||!pass) return $('auth-error').textContent='Enter email & password';
   $('auth-error').textContent='…';
-  const {error}=await sb.auth.signInWithPassword({email,password:pass});
-  if(error) $('auth-error').textContent=error.message; else { hideAuth(); toast('Logged in'); }
+  try{ const d=await api('/api/auth',{method:'POST', body:JSON.stringify({action:'login', email, password:pass})}); hideAuth(); toast('Logged in'); location.reload(); }catch(e){ $('auth-error').textContent=e.message; }
 });
 $('auth-signup')?.addEventListener('click', async()=>{
   const email=$('auth-email').value.trim(), pass=$('auth-pass').value;
   if(pass.length<6) return $('auth-error').textContent='Password min 6 chars';
   $('auth-error').textContent='…';
-  const {error}=await sb.auth.signUp({email,password:pass});
-  if(error) $('auth-error').textContent=error.message; else { hideAuth(); toast('Account created'); }
+  try{ const d=await api('/api/auth',{method:'POST', body:JSON.stringify({action:'signup', email, password:pass})}); hideAuth(); toast('Account created'); location.reload(); }catch(e){ $('auth-error').textContent=e.message; }
 });
-
 async function checkAdmin(){
   const gate=$('gate'), status=$('gate-status'), msg=$('gate-msg'), acts=$('gate-actions'), dash=$('dash');
   if(!currentUser){
-    status.textContent='not logged in';
-    status.style.color='var(--danger)';
-    msg.innerHTML='Log in with an admin account. Then seed <code>admin_users</code> once in SQL Editor.';
+    status.textContent='not logged in'; status.style.color='var(--danger)';
+    msg.textContent='Log in with an admin account. First user: sign up then click Make me admin.';
     acts.innerHTML=`<button id="gate-login" class="btn btn-main">Log in</button>`;
     $('gate-login')?.addEventListener('click', showAuth);
     dash.style.display='none';
     return false;
   }
-  // use security-definer is_admin() via rpc (bypasses RLS recursion), fallback to own-row select
-  let isAdmin=false;
   try{
-    const { data: rpcData, error: rpcErr } = await sb.rpc('is_admin');
-    if(!rpcErr) isAdmin = !!rpcData;
-    else {
-      const { data, error } = await sb.from('admin_users').select('user_id').eq('user_id', currentUser.id).maybeSingle();
-      if(error) console.warn(error.message);
-      isAdmin = !!data;
+    const r=await api('/api/admin?action=is_admin');
+    if(!r.isAdmin){
+      status.textContent='not admin'; status.style.color='var(--danger)';
+      msg.innerHTML=`Logged in as <b>${esc(currentUser.email)}</b> but not admin. Click <b>Make me admin</b> if you are first user.`;
+      acts.innerHTML=`<button id="gate-seed" class="btn btn-main">Make me admin</button><button id="gate-recheck" class="btn btn-ghost">Recheck</button>`;
+      $('gate-seed')?.addEventListener('click', async()=>{ await api('/api/admin?action=seed_admin',{method:'POST'}); toast('Admin granted'); location.reload(); });
+      $('gate-recheck')?.addEventListener('click', checkAdmin);
+      dash.style.display='none';
+      return false;
     }
   }catch(e){
-    const { data } = await sb.from('admin_users').select('user_id').eq('user_id', currentUser.id).maybeSingle();
-    isAdmin = !!data;
+    status.textContent='error'; msg.textContent=e.message; dash.style.display='none'; return false;
   }
-  if(!isAdmin){
-    status.textContent='not admin';
-    status.style.color='var(--danger)';
-    msg.innerHTML=`Logged in as <b>${esc(currentUser.email)}</b> but not in <code>admin_users</code>. Run in Supabase SQL Editor:<br><code>insert into public.admin_users(user_id) select id from auth.users where email='${esc(currentUser.email)}' on conflict do nothing;</code>`;
-    acts.innerHTML=`<button id="gate-recheck" class="btn btn-ghost">Recheck</button>`;
-    $('gate-recheck')?.addEventListener('click', checkAdmin);
-    dash.style.display='none';
-    return false;
-  }
-  status.textContent='admin ✓';
-  status.style.color='var(--accent)';
+  status.textContent='admin ✓'; status.style.color='var(--accent)';
   msg.textContent='Access granted — loading stats…';
   acts.innerHTML='';
   dash.style.display='block';
   return true;
 }
-
 async function loadStats(){
   const kpis=$('kpis');
-  // v_admin_stats may not exist until sql run — handle gracefully
   let s=null;
-  const { data, error } = await sb.from('v_admin_stats').select('*').maybeSingle();
-  if(!error) s=data;
-  else {
-    // fallback: count directly (admin policies allow)
-    const [tracks, queueP, queueE, playlists, plays] = await Promise.all([
-      sb.from('tracks').select('id', {count:'exact', head:true}),
-      sb.from('ingest_queue').select('id', {count:'exact', head:true}).eq('status','pending'),
-      sb.from('ingest_queue').select('id', {count:'exact', head:true}).eq('status','error'),
-      sb.from('playlists').select('id', {count:'exact', head:true}),
-      sb.from('track_events').select('id', {count:'exact', head:true}).eq('event','play')
-    ]);
-    s={ tracks_total: tracks.count??0, queue_pending: queueP.count??0, queue_errors: queueE.count??0, playlists_total: playlists.count??0, plays_total: plays.count??0, views_total: 0, queues_total: 0 };
-    if(error && !String(error.message).includes('does not exist')) console.warn('stats fallback', error.message);
-  }
-  const items=[
-    ['Tracks', s?.tracks_total??0],
-    ['Pending queue', s?.queue_pending??0],
-    ['Queue errors', s?.queue_errors??0],
-    ['Playlists', s?.playlists_total??0],
-    ['Plays (events)', s?.plays_total??0],
-    ['Views', s?.views_total??0],
-  ];
+  try{ s=await api('/api/admin?action=stats'); }catch(e){ s={tracks_total:0, queue_pending:0, queue_errors:0, playlists_total:0, plays_total:0, views_total:0}; console.warn(e); }
+  const items=[['Tracks', s?.tracks_total??0],['Pending queue', s?.queue_pending??0],['Queue errors', s?.queue_errors??0],['Playlists', s?.playlists_total??0],['Plays', s?.plays_total??0],['Views', s?.views_total??0]];
   kpis.innerHTML=items.map(([k,v])=>`<div class="kpi"><small>${esc(k)}</small><strong>${esc(v)}</strong></div>`).join('');
-
-  // leaderboard
   const lb=$('leader-body');
-  const { data: leader, error: e2 } = await sb.from('v_track_leaderboard').select('*').order('plays', {ascending:false}).limit(20);
-  let rows=leader;
-  if(e2){
-    // fallback aggregate client-side from events + tracks
-    const { data: tracks } = await sb.from('tracks').select('id,title,artist,extractor,storage_path').limit(200);
-    const { data: evs } = await sb.from('track_events').select('track_id,event').in('event',['play','view','queue']).limit(5000);
-    const map={}; (evs||[]).forEach(r=>{ map[r.track_id]=map[r.track_id]||{plays:0,views:0,queues:0}; if(r.event==='play') map[r.track_id].plays++; if(r.event==='view') map[r.track_id].views++; if(r.event==='queue') map[r.track_id].queues++; });
-    rows=(tracks||[]).map(t=>({...t, plays:map[t.id]?.plays||0, views:map[t.id]?.views||0, queues:map[t.id]?.queues||0})).sort((a,b)=>b.plays-a.plays).slice(0,20);
-  }
-  if(!rows || !rows.length) lb.innerHTML=`<tr><td colspan="7" style="color:var(--text-tertiary)">No data yet — play a track to generate events.</td></tr>`;
-  else lb.innerHTML=rows.map(r=>`<tr><td title="${esc(r.title)}">${esc((r.title||'').slice(0,40))}</td><td>${esc((r.artist||'').slice(0,24))}</td><td>${esc(r.extractor||'')}</td><td>${esc(r.plays||0)}</td><td>${esc(r.views||0)}</td><td>${esc(r.queues||0)}</td><td><button class="btn btn-ghost" style="padding:4px 8px;color:#e8a0a0;border-color:#3a2a2a;background:#1f1414" data-del="${esc(r.id)}" data-path="${esc(r.storage_path||'')}" data-title="${esc((r.title||'track').replace(/"/g,'&quot;'))}">✕ Delete</button></td></tr>`).join('');
-  // bind delete handlers
-  lb.querySelectorAll('[data-del]').forEach(btn=>{
-    btn.addEventListener('click', async()=>{
-      const id=btn.getAttribute('data-del');
-      const storagePath=btn.getAttribute('data-path');
-      const title=btn.getAttribute('data-title')||'this track';
-      if(!confirm(`Delete "${title}"?\n\nThis removes DB row + MP3 file from tracks bucket. Playlist entries cascade. Cannot undo.`)) return;
-      btn.disabled=true; btn.textContent='…';
-      try{
-        // audit log (optional)
-        try{ await sb.from('deleted_tracks').insert({id, title, storage_path: storagePath, deleted_by: currentUser?.id}); }catch{}
-        if(storagePath){
-          const { error: sErr } = await sb.storage.from('tracks').remove([storagePath]);
-          if(sErr) console.warn('storage delete', sErr.message);
-        }
-        const { error } = await sb.from('tracks').delete().eq('id', id);
-        if(error) throw error;
-        toast('Deleted '+title);
-        await loadStats();
-      }catch(e){
-        toast('Delete failed: '+e.message);
-        btn.disabled=false; btn.textContent='✕ Delete';
-      }
+  try{
+    const rows=await api('/api/admin?action=leaderboard');
+    if(!rows.length) lb.innerHTML=`<tr><td colspan="7" style="color:var(--text-tertiary)">No data yet</td></tr>`;
+    else lb.innerHTML=rows.map(r=>`<tr><td title="${esc(r.title)}">${esc((r.title||'').slice(0,40))}</td><td>${esc((r.artist||'').slice(0,24))}</td><td>${esc(r.extractor||'')}</td><td>${esc(r.plays||0)}</td><td>${esc(r.views||0)}</td><td>${esc(r.queues||0)}</td><td><button class="btn btn-ghost" style="padding:4px 8px;color:#e8a0a0" data-del="${esc(r.id)}" data-title="${esc((r.title||'track').replace(/"/g,'&quot;'))}">✕ Delete</button></td></tr>`).join('');
+    lb.querySelectorAll('[data-del]').forEach(btn=>{
+      btn.addEventListener('click', async()=>{
+        const id=btn.getAttribute('data-del'); const title=btn.getAttribute('data-title')||'track';
+        if(!confirm(`Delete "${title}"?`)) return;
+        btn.disabled=true; btn.textContent='…';
+        try{ await api(`/api/tracks?id=${encodeURIComponent(id)}`,{method:'DELETE'}); toast('Deleted'); await loadStats(); }catch(e){ toast(e.message); btn.disabled=false; btn.textContent='✕ Delete'; }
+      });
     });
-  });
-
-  // recent events — try admin view with email, fallback to raw
+  }catch(e){ lb.innerHTML=`<tr><td colspan="7" style="color:var(--danger)">${esc(e.message)}</td></tr>`; }
   const evBody=$('events-body');
-  let evs2=null, e3=null;
-  let useView=false;
-  {
-    const r=await sb.from('v_admin_events').select('created_at,event,track_id,email,title').order('created_at',{ascending:false}).limit(30);
-    if(!r.error){ evs2=r.data; useView=true; }
-    else {
-      const r2=await sb.from('track_events').select('created_at,event,track_id,user_id,meta').order('created_at',{ascending:false}).limit(30);
-      evs2=r2.data; e3=r2.error;
-    }
-  }
-  if(e3) evBody.innerHTML=`<tr><td colspan="4" style="color:var(--danger)">${esc(e3.message)} — run supabase-admin-analytics.sql</td></tr>`;
-  else if(!evs2?.length) evBody.innerHTML=`<tr><td colspan="4" style="color:var(--text-tertiary)">No events yet</td></tr>`;
-  else {
-    if(useView){
-      evBody.innerHTML=evs2.map(e=>{
-        const when=new Date(e.created_at).toLocaleString();
-        const title=e.title || (e.track_id? e.track_id.slice(0,8) : '—');
-        return `<tr><td>${esc(when)}</td><td><span class="badge">${esc(e.event)}</span></td><td title="${esc(title)}">${esc(String(title).slice(0,32))}</td><td title="${esc(e.email||'anon')}">${esc((e.email||'anon').slice(0,28))}</td></tr>`;
-      }).join('');
-    } else {
-      const ids=[...new Set(evs2.map(e=>e.track_id).filter(Boolean))].slice(0,30);
-      let titleMap={};
-      if(ids.length){ const {data:ts}=await sb.from('tracks').select('id,title').in('id', ids); (ts||[]).forEach(t=>titleMap[t.id]=t.title); }
-      evBody.innerHTML=evs2.map(e=>{
-        const when=new Date(e.created_at).toLocaleString();
-        const title=e.track_id ? (titleMap[e.track_id]|| e.track_id.slice(0,8)) : (e.meta?.q|| e.meta?.url||'—');
-        const email=e.meta?.email || (e.user_id||'anon').slice(0,8);
-        return `<tr><td>${esc(when)}</td><td><span class="badge">${esc(e.event)}</span></td><td title="${esc(title)}">${esc(String(title).slice(0,32))}</td><td title="${esc(email)}">${esc(String(email).slice(0,28))}</td></tr>`;
-      }).join('');
-    }
-  }
-
-  // pending approvals
-  async function loadPending(){
-    const body=$('pending-body'); if(!body) return;
-    const { data, error } = await sb.rpc('get_pending_users');
-    if(error){ body.innerHTML=`<tr><td colspan="3" style="color:var(--danger)">${esc(error.message)}</td></tr>`; return; }
-    if(!data?.length) body.innerHTML=`<tr><td colspan="3" style="color:var(--text-tertiary)">No pending — all users approved</td></tr>`;
+  try{
+    const evs=await api('/api/admin?action=events');
+    if(!evs.length) evBody.innerHTML=`<tr><td colspan="4" style="color:var(--text-tertiary)">No events yet</td></tr>`;
+    else evBody.innerHTML=evs.map(e=>`<tr><td>${esc(new Date(e.created_at).toLocaleString())}</td><td><span class="badge">${esc(e.event)}</span></td><td title="${esc(e.title||e.track_id||'')}">${esc(String(e.title||e.track_id||'—').slice(0,32))}</td><td title="${esc(e.email||'anon')}">${esc(String(e.email||'anon').slice(0,28))}</td></tr>`).join('');
+  }catch(e){ evBody.innerHTML=`<tr><td colspan="4" style="color:var(--danger)">${esc(e.message)}</td></tr>`; }
+  const qBody=$('queue-body');
+  try{
+    const qrows=await api('/api/admin?action=queue');
+    if(!qrows.length) qBody.innerHTML=`<tr><td colspan="4" style="color:var(--text-tertiary)">No queue rows</td></tr>`;
+    else qBody.innerHTML=qrows.map(r=>`<tr><td title="${esc(r.original_url)}">${esc(r.original_url.slice(0,38))}</td><td>${r.status==='error'?`<span class="badge-err">error</span>`:`<span class="badge">${esc(r.status)}</span>`}</td><td>${esc((r.error||'').slice(0,40))}</td><td>${esc(new Date(r.created_at).toLocaleString())}</td></tr>`).join('');
+  }catch(e){ qBody.innerHTML=`<tr><td colspan="4" style="color:var(--danger)">${esc(e.message)}</td></tr>`; }
+  // pending
+  const body=$('pending-body');
+  try{
+    const data=await api('/api/admin?action=pending');
+    if(!data.length) body.innerHTML=`<tr><td colspan="3" style="color:var(--text-tertiary)">No pending — all users approved</td></tr>`;
     else body.innerHTML=data.map(u=>`<tr><td>${esc(u.email)}</td><td>${esc(new Date(u.created_at).toLocaleString())}</td><td><button class="btn btn-main" style="padding:4px 10px" data-approve="${esc(u.id)}">Approve</button></td></tr>`).join('');
     body.querySelectorAll('[data-approve]').forEach(b=>{
       b.addEventListener('click', async()=>{
-        const id=b.getAttribute('data-approve');
-        b.disabled=true; b.textContent='…';
-        const { error } = await sb.from('approved_users').insert({user_id:id, approved_by: currentUser?.id});
-        if(error) toast('Approve failed: '+error.message);
-        else { toast('Approved'); await loadPending(); await loadStats(); }
+        const id=b.getAttribute('data-approve'); b.disabled=true; b.textContent='…';
+        try{ await api('/api/admin?action=approve',{method:'POST', body:JSON.stringify({user_id:id})}); toast('Approved'); await loadStats(); }catch(e){ toast(e.message); }
         b.disabled=false; b.textContent='Approve';
       });
     });
-  }
-
-  // queue health
-  const qBody=$('queue-body');
-  const { data: qrows } = await sb.from('ingest_queue').select('original_url,status,error,created_at').order('created_at',{ascending:false}).limit(20);
-  if(!qrows?.length) qBody.innerHTML=`<tr><td colspan="4" style="color:var(--text-tertiary)">No queue rows</td></tr>`;
-  else qBody.innerHTML=qrows.map(r=>{
-    const st=r.status==='error'?`<span class="badge-err">error</span>`:`<span class="badge">${esc(r.status)}</span>`;
-    return `<tr><td title="${esc(r.original_url)}">${esc(r.original_url.slice(0,38))}</td><td>${st}</td><td>${esc((r.error||'').slice(0,40))}</td><td>${esc(new Date(r.created_at).toLocaleString())}</td></tr>`;
-  }).join('');
-  await loadPending();
+  }catch(e){ body.innerHTML=`<tr><td colspan="3" style="color:var(--danger)">${esc(e.message)}</td></tr>`; }
 }
-
+$('seed-admin')?.addEventListener('click', async()=>{ try{ await api('/api/admin?action=seed_admin',{method:'POST'}); toast('Admin granted — reload'); location.reload(); }catch(e){ toast(e.message); }});
 async function init(){
-  const { data:{session} } = await sb.auth.getSession();
-  currentUser=session?.user||null;
+  try{ const d=await api('/api/auth'); currentUser=d.user||null; }catch{ currentUser=null; }
   renderAuth();
   const ok=await checkAdmin();
   if(ok) await loadStats();
 }
-sb.auth.onAuthStateChange(async(_,s)=>{ currentUser=s?.user||null; renderAuth(); const ok=await checkAdmin(); if(ok) await loadStats(); });
 $('refresh-btn')?.addEventListener('click', loadStats);
-$('refresh-pending')?.addEventListener('click', async()=>{ const b=$('refresh-pending'); if(b){ b.textContent='…'; } await (async()=>{ const {data}=await sb.rpc('get_pending_users'); const body=$('pending-body'); if(body && data) body.innerHTML = !data.length ? `<tr><td colspan="3" style="color:var(--text-tertiary)">No pending</td></tr>` : data.map(u=>`<tr><td>${esc(u.email)}</td><td>${esc(new Date(u.created_at).toLocaleString())}</td><td><button class="btn btn-main" style="padding:4px 10px" data-approve="${esc(u.id)}">Approve</button></td></tr>`).join(''); })(); if(b) b.textContent='↺'; });
+$('refresh-pending')?.addEventListener('click', loadStats);
 init();
 </script>
 </body>

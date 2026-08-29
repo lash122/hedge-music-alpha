@@ -1,20 +1,15 @@
 'use strict';
-// Hedge Music Alpha — Cloudflare Pages + D1 + R2 (no Supabase, no laptop)
-// Paste URLs -> Worker ingests immediately via oembed/noembed + R2, no yt-dlp/ffmpeg polling
+// Hedge Music - PWA frontend: queue yt-dlp URLs -> Supabase, play tracks, playlists
+const SUPABASE_URL = 'https://mgwaehtmdecvptzzigwv.supabase.co';
+const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1nd2FlaHRtZGVjdnB0enppZ3d2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODc3Nzk4NjEsImV4cCI6MjEwMzM1NTg2MX0.iXHwe9wQgC_fHvOqh9TFRcJu9ypJpRdXVvOaKweGreQ';
+
+const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 const $ = id => document.getElementById(id);
 const esc = s => String(s??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;').replace(/`/g,'&#96;');
 function isValidThumb(url){ try{ const u=new URL(url); return u.protocol==='https:'; }catch{ return false; } }
 function toast(m){ const t=$('toast'); if(!t) return; t.textContent=m; t.classList.add('show'); t.style.display='block'; clearTimeout(toast._t); toast._t=setTimeout(()=>{t.classList.remove('show'); t.style.display='none';},2500); }
 function vibrate(p=10){ try{ navigator.vibrate&&navigator.vibrate(p);}catch{} }
-
-// --- API wrapper (Cloudflare Workers, cookie auth) ---
-async function api(path, opts={}){
-  const res = await fetch(path, { credentials:'include', headers:{'content-type':'application/json', ...(opts.headers||{})}, ...opts });
-  const data = await res.json().catch(()=>({}));
-  if(!res.ok) throw new Error(data.error||`HTTP ${res.status}`);
-  return data;
-}
 
 // --- State ---
 let tracks = [];
@@ -43,8 +38,6 @@ function toggleLike(id){
 
 // --- Auth ---
 let currentUser=null;
-let isAdmin=false;
-let isApproved=true;
 function getInitial(email){ return (email||'?').trim().charAt(0).toUpperCase(); }
 function toggleProfileMenu(show){
   const m=$('profile-menu'), b=$('avatar-btn');
@@ -61,7 +54,7 @@ function renderAuth(){
     area.innerHTML=`<button id="avatar-btn" class="avatar-btn" aria-label="Profile menu" aria-expanded="false">${esc(initial)}</button><div id="profile-menu" class="profile-menu" style="display:none"><div class="profile-email" title="${esc(currentUser.email)}">${esc(currentUser.email)}</div><button id="open-settings" class="btn btn-ghost" style="width:100%">⚙ Settings</button><button id="auth-logout" class="btn btn-ghost" style="width:100%">Log out</button></div>`;
     $('avatar-btn')?.addEventListener('click', (e)=>{ e.stopPropagation(); toggleProfileMenu(); });
     $('open-settings')?.addEventListener('click', ()=>{ toggleProfileMenu(false); openSettings(); });
-    $('auth-logout')?.addEventListener('click', async()=>{ toggleProfileMenu(false); await api('/api/auth',{method:'POST', body:JSON.stringify({action:'logout'})}); currentUser=null; renderAuth(); queue=[]; playlists=[]; playlistTracks=[]; tracks=[]; renderTracks(); renderPlaylists(); toast('Logged out'); });
+    $('auth-logout')?.addEventListener('click', async()=>{ toggleProfileMenu(false); await sb.auth.signOut(); });
   } else {
     area.innerHTML=`<button id="auth-open" class="btn btn-ghost" style="padding:5px 10px">Log in</button><button id="open-settings-guest" class="btn btn-ghost" style="padding:5px 8px" title="Settings">⚙</button>`;
     $('auth-open')?.addEventListener('click', ()=> showAuth('login'));
@@ -91,23 +84,16 @@ $('auth-login')?.addEventListener('click', async()=>{
   const email=$('auth-email').value.trim(), pass=$('auth-pass').value;
   if(!email||!pass) return $('auth-error').textContent='Enter email & password';
   $('auth-error').textContent='…';
-  try{
-    const data = await api('/api/auth',{method:'POST', body:JSON.stringify({action:'login', email, password:pass})});
-    hideAuth(); toast('Logged in');
-    currentUser=data.user; isAdmin=!!data.isAdmin; isApproved=!!data.isApproved;
-    renderAuth(); await Promise.all([loadQueue(), loadPlaylists(), loadTracks()]);
-  }catch(e){ $('auth-error').textContent=e.message; }
+  const {error}=await sb.auth.signInWithPassword({email,password:pass});
+  if(error) $('auth-error').textContent=error.message; else { hideAuth(); toast('Logged in'); }
 });
 $('auth-signup')?.addEventListener('click', async()=>{
   const email=$('auth-email').value.trim(), pass=$('auth-pass').value;
   if(!email||!pass) return $('auth-error').textContent='Enter email & password';
   if(pass.length<6) return $('auth-error').textContent='Password min 6 chars';
   $('auth-error').textContent='…';
-  try{
-    const data = await api('/api/auth',{method:'POST', body:JSON.stringify({action:'signup', email, password:pass})});
-    hideAuth(); toast('Account created');
-    currentUser=data.user; renderAuth(); await Promise.all([loadQueue(), loadPlaylists(), loadTracks()]);
-  }catch(e){ $('auth-error').textContent=e.message; }
+  const {error}=await sb.auth.signUp({email,password:pass});
+  if(error) $('auth-error').textContent=error.message; else { hideAuth(); toast('Account created — check email if confirmation required'); }
 });
 let authRedirectDone=false;
 function redirectToLogin(){
@@ -116,18 +102,19 @@ function redirectToLogin(){
   showAuth('login');
   toast('Private library — log in to continue');
 }
+async function isApproved(){
+  try{ const { data, error } = await sb.rpc('is_approved'); if(!error) return !!data; }catch{}
+  return true;
+}
 async function initAuth(){
-  try{
-    const data = await api('/api/auth');
-    currentUser=data.user||null;
-    isAdmin=!!data.isAdmin;
-    isApproved=!!data.isApproved;
-  }catch{ currentUser=null; }
+  const {data:{session}}=await sb.auth.getSession();
+  currentUser=session?.user||null;
   renderAuth();
   if(currentUser){
-    if(!isApproved){
+    const approved = await isApproved();
+    if(!approved){
       queue=[]; playlists=[]; playlistTracks=[]; tracks=[];
-      $('tracks-list').innerHTML=`<div class="empty"><div class="empty-icon">⏳</div><div>Awaiting approval</div><small style="color:var(--text-tertiary)">Admin will approve your account soon</small></div>`;
+      $('tracks-list').innerHTML=`<div class="empty"><div class="empty-icon">⏳</div><div>Awaiting approval</div><small style="color:var(--text-tertiary)">Admin will approve your account soon — you can browse after approval</small></div>`;
       const qc=$('queue-count'); if(qc) qc.textContent='awaiting approval';
       const pl=$('playlists-list'); if(pl) pl.innerHTML='<small style="color:var(--text-tertiary)">Awaiting approval</small>';
       toast('Awaiting admin approval');
@@ -137,25 +124,53 @@ async function initAuth(){
   }
   else { queue=[]; playlists=[]; playlistTracks=[]; tracks=[]; const qc=$('queue-count'); if(qc) qc.textContent='— log in to queue'; const pl=$('playlists-list'); if(pl) pl.innerHTML='<small style="color:var(--text-tertiary)">Log in to see your private library</small>'; $('tracks-list').innerHTML=`<div class="empty"><div class="empty-icon">🔒</div><div>Private library — log in required</div><button id="gate-login-btn" class="btn btn-main" style="margin-top:8px">Log in</button></div>`; setTimeout(()=>{ const b=$('gate-login-btn'); if(b) b.addEventListener('click', ()=> showAuth('login')); if(!sessionStorage.getItem('login-redirect')){ sessionStorage.setItem('login-redirect','1'); setTimeout(()=> redirectToLogin(), 400); } },0); }
 }
+sb.auth.onAuthStateChange(async (_event, session)=>{
+  currentUser=session?.user||null;
+  renderAuth();
+  if(currentUser){
+    const approved = await isApproved();
+    if(!approved){
+      queue=[]; playlists=[]; playlistTracks=[]; tracks=[];
+      $('tracks-list').innerHTML=`<div class="empty"><div class="empty-icon">⏳</div><div>Awaiting approval</div><small style="color:var(--text-tertiary)">Admin will approve your account soon</small></div>`;
+      toast('Awaiting admin approval');
+      return;
+    }
+    authRedirectDone=false; sessionStorage.removeItem('login-redirect'); await Promise.all([loadQueue(), loadPlaylists(), loadTracks()]);
+  } else { queue=[]; playlists=[]; playlistTracks=[]; tracks=[]; renderPlaylists(); renderTracks(); if(!authRedirectDone) setTimeout(()=> redirectToLogin(), 200); }
+});
 initAuth();
 
 // --- Helpers ---
-function streamUrl(track){
-  if(!track) return '';
-  if(track.storage_path) return `/api/stream?id=${encodeURIComponent(track.id)}`;
-  return '';
+function publicUrl(storagePath){
+  if(!storagePath) return '';
+  // fallback for legacy public bucket; private bucket uses signed URL via getSignedUrl
+  return `${SUPABASE_URL}/storage/v1/object/public/tracks/${storagePath.split('/').map(encodeURIComponent).join('/')}`;
+}
+async function getSignedUrl(storagePath){
+  if(!storagePath) return '';
+  try{
+    const { data, error } = await sb.storage.from('tracks').createSignedUrl(storagePath, 3600);
+    if(!error && data?.signedUrl) return data.signedUrl;
+  }catch{}
+  // fallback to publicUrl for legacy public bucket during migration
+  return publicUrl(storagePath);
 }
 function fmtTime(s){ if(!isFinite(s) || s==null) return '--:--'; const m=Math.floor(s/60), sec=Math.floor(s%60); return m+':'+String(sec).padStart(2,'0'); }
 function requireAuth(){
   if(currentUser) return true;
   showAuth('login');
-  toast('Log in to see your private library');
+  toast('Log in to see your private library — tracks are owner-only');
   return false;
 }
 function isMobile(){ return window.innerWidth<=860; }
+// --- Analytics (additive, fire-and-forget, never blocks UI) ---
 function logEvent(event, trackId, meta){
   try{
-    api('/api/events',{method:'POST', body:JSON.stringify({event, track_id:trackId, meta})}).catch(()=>{});
+    const payload={ event, meta: meta||null };
+    if(trackId) payload.track_id=trackId;
+    if(currentUser?.id) payload.user_id=currentUser.id;
+    if(currentUser?.email) { payload.meta = {...(payload.meta||{}), email: currentUser.email }; }
+    sb.from('track_events').insert(payload).then(()=>{},()=>{});
   }catch{}
 }
 
@@ -167,7 +182,9 @@ function setMobileTab(tab){
     b.classList.toggle('active', active);
     b.setAttribute('aria-selected', active?'true':'false');
   });
-  if(tab==='queue') setIngest(true, true);
+  if(tab==='queue'){
+    setIngest(true, true);
+  }
   try{ localStorage.setItem('hedge-tab', tab); }catch{}
   if(location.hash!=='#'+tab) history.replaceState(null,'','#'+tab);
 }
@@ -178,6 +195,7 @@ function initTabs(){
     setMobileTab(b.dataset.tab);
     if(b.dataset.tab!=='queue') setIngest(false, true);
   }));
+  // default from hash / localStorage
   let initial = location.hash.replace('#','') || (localStorage.getItem('hedge-tab')||'library');
   if(!['library','playlists','queue'].includes(initial)) initial='library';
   setMobileTab(initial);
@@ -192,8 +210,8 @@ initTabs();
 function setIngest(open, fromTab=false){
   const panel=$('ingest-panel');
   const overlay=$('sheet-overlay');
-  if(!panel) return;
   const willOpen = open ?? panel.classList.contains('collapsed');
+  // on mobile queue tab, ingest is inline not sheet -> don't toggle collapsed behavior
   if(isMobile() && document.body.getAttribute('data-mobile-tab')==='queue'){
     panel.classList.remove('collapsed');
     panel.setAttribute('aria-hidden','false');
@@ -204,10 +222,16 @@ function setIngest(open, fromTab=false){
   panel.setAttribute('aria-hidden', willOpen ? 'false' : 'true');
   const btn=$('toggle-ingest');
   if(btn) { btn.setAttribute('aria-expanded', willOpen ? 'true' : 'false'); btn.textContent = willOpen ? '✕ Close' : '＋ Queue'; }
-  if(overlay){ overlay.style.display = willOpen && isMobile() ? 'block' : 'none'; }
+  if(overlay){
+    overlay.style.display = willOpen && isMobile() ? 'block' : 'none';
+  }
   if(willOpen) setTimeout(()=>$('yt-url')?.focus(), 180);
-  if(!fromTab && willOpen && isMobile()) setMobileTab('queue');
-  if(!willOpen && isMobile() && document.body.getAttribute('data-mobile-tab')==='queue' && !fromTab) setMobileTab('library');
+  if(!fromTab && willOpen && isMobile()){
+    setMobileTab('queue');
+  }
+  if(!willOpen && isMobile() && document.body.getAttribute('data-mobile-tab')==='queue' && !fromTab){
+    setMobileTab('library');
+  }
 }
 $('toggle-ingest')?.addEventListener('click', ()=> setIngest());
 $('close-ingest')?.addEventListener('click', ()=> setIngest(false));
@@ -239,6 +263,7 @@ searchClear?.addEventListener('click', ()=>{ searchInput.value=''; searchQ=''; r
     setTimeout(()=>{
       if($('yt-url')) $('yt-url').value=url;
       setIngest(true);
+      // clean url without reload loop
       history.replaceState(null,'', location.pathname + location.hash);
     }, 300);
   }
@@ -314,7 +339,7 @@ setTimeout(()=>{
   }
 }, 1500);
 
-// --- Queue ingest (Cloudflare: immediate, no laptop) ---
+// --- Queue ingest ---
 $('queue-btn')?.addEventListener('click', queueNow);
 $('yt-url')?.addEventListener('keydown', e=>{ if(e.key==='Enter') queueNow(); });
 async function queueNow(){
@@ -324,29 +349,35 @@ async function queueNow(){
   if(!/^https?:\/\//i.test(url)){ toast('URL must start https://'); return; }
   if(!requireAuth()) return;
   $('queue-btn').disabled=true;
-  $('queue-status').textContent='Queuing & ingesting (Cloudflare)…'; $('queue-status').className='status';
+  $('queue-status').textContent='Queuing...'; $('queue-status').className='status';
   try{
-    const data = await api('/api/queue',{method:'POST', body:JSON.stringify({original_url:url})});
+    const payload={ original_url: url };
+    if(currentUser) payload.owner_id=currentUser.id;
+    const { error } = await sb.from('ingest_queue').insert(payload);
+    if(error) throw error;
     $('yt-url').value='';
-    if(data.dedup) { $('queue-status').textContent='✓ Already in library'; $('queue-status').className='status ok'; }
-    else { $('queue-status').textContent=`✓ Added: ${data.title||'track'} — no laptop needed!`; $('queue-status').className='status ok'; }
-    toast(data.dedup ? 'Already in library' : 'Added — Cloudflare ingested, no laptop!');
+    $('queue-status').textContent='✓ Queued as pending. Run laptop: node tools/ingest.js --watch';
+    $('queue-status').className='status ok';
+    toast('Queued! Run laptop ingest');
     if(isMobile()) setMobileTab('queue');
-    await Promise.all([loadQueue(), loadTracks()]);
-    logEvent('queue', data.trackId, { url: url.slice(0,120) });
+    await loadQueue();
+    logEvent('queue', null, { url: url.slice(0,120) });
   }catch(e){
     $('queue-status').textContent='✗ '+e.message; $('queue-status').className='status err';
+    if(e.message.includes('does not exist') || e.message.includes('relation')){
+      $('queue-status').textContent += ' — Run supabase-music.sql first.';
+    }
+    if(e.message.includes('row-level security') || e.message.includes('policy')) $('queue-status').textContent += ' — Log in first';
   } finally { $('queue-btn').disabled=false; }
 }
 
 async function loadQueue(){
-  if(!currentUser){ const qc=$('queue-count'); if(qc) qc.textContent='— log in to queue'; const badge=$('queue-badge'); if(badge) badge.style.display='none'; const dot=$('tab-queue-dot'); if(dot) dot.style.display='none'; const pl=$('pending-list'); if(pl) pl.innerHTML='<small style="color:var(--text-tertiary)">Log in to queue</small>'; return; }
-  try{
-    const data = await api('/api/queue');
-    queue = Array.isArray(data) ? data : (data.queue||[]);
-  }catch(e){ console.warn('queue load', e.message); queue=[]; }
-  const pending = queue.filter(q=>q.status==='pending'||q.status==='processing');
-  const qc=$('queue-count'); if(qc) qc.textContent = pending.length ? pending.length+' pending' : queue.filter(q=>q.status==='done').length+' done';
+  if(!currentUser){ const qc=$('queue-count'); if(qc) qc.textContent='— log in to queue'; const badge=$('queue-badge'); if(badge) badge.style.display='none'; const dot=$('tab-queue-dot'); if(dot) dot.style.display='none'; const pl=$('pending-list'); if(pl) pl.innerHTML='<small style="color:var(--text-tertiary)">Log in to queue and see your pending uploads</small>'; return; }
+  const { data, error } = await sb.from('ingest_queue').select('*').order('created_at', {ascending:false}).limit(50);
+  if(error){ console.warn('queue load', error.message); return; }
+  queue = data||[];
+  const pending = queue.filter(q=>q.status==='pending');
+  const qc=$('queue-count'); if(qc) qc.textContent = pending.length+' pending';
   const badge = $('queue-badge');
   if(badge){ if(pending.length){ badge.style.display=''; badge.textContent = pending.length+' queued'; } else badge.style.display='none'; }
   const dot=$('tab-queue-dot'); if(dot) dot.style.display = pending.length ? 'inline-block' : 'none';
@@ -355,7 +386,7 @@ async function loadQueue(){
     pl.innerHTML = queue.slice(0,12).map(q=>{
       const s = q.status==='pending'?'⏳': q.status==='done'?'✓': q.status==='processing'?'⚙️':'✗';
       return `<div class="pending-item"><span>${s} ${esc(q.original_url.slice(0,54))}</span><small>${esc(q.status)} ${q.error? '· '+esc(q.error.slice(0,40)):''}</small></div>`;
-    }).join('') || '<div class="empty" style="padding:12px">No queued URLs — paste one above</div>';
+    }).join('') || '<div class="empty" style="padding:12px">No queued URLs</div>';
     if(queue.length>12) pl.innerHTML += `<small style="color:var(--text-tertiary);padding:6px 10px;display:block">+ ${queue.length-12} more</small>`;
   }
 }
@@ -367,22 +398,23 @@ function showSkeleton(){
 }
 async function loadTracks(){
   showSkeleton();
-  try{
-    const data = await api('/api/tracks');
-    tracks = Array.isArray(data) ? data : [];
-  }catch(e){
-    console.warn('tracks load', e.message);
-    if(String(e.message).includes('Awaiting approval')){ $('tracks-list').innerHTML=`<div class="empty"><div class="empty-icon">⏳</div><div>Awaiting approval</div></div>`; return; }
-    if(String(e.message).includes('Auth required')){ $('tracks-list').innerHTML=`<div class="empty"><div class="empty-icon">🔒</div><div>Private library — log in required</div><button id="empty-login-btn" class="btn btn-main" style="margin-top:8px">Log in</button></div>`; setTimeout(()=>{ const b=$('empty-login-btn'); if(b) b.addEventListener('click', ()=> showAuth('login')); },0); return; }
-    $('tracks-list').innerHTML = '<div class="empty"><div class="empty-icon">⚠️</div><div>Failed to load tracks</div></div>';
+  const { data, error } = await sb.from('tracks').select('*').order('created_at', {ascending:false}).limit(500);
+  if(error){
+    console.warn('tracks load', error.message);
+    if(error.message.includes('does not exist')) $('tracks-list').innerHTML = '<div class="empty"><div class="empty-icon">♪</div><div>Run <code>supabase-music.sql</code> in Supabase SQL Editor, then queue a URL.</div></div>';
+    else $('tracks-list').innerHTML = '<div class="empty"><div class="empty-icon">⚠️</div><div>Failed to load tracks</div></div>';
     return;
   }
+  tracks = data||[];
   const tc=$('tracks-count'); if(tc) tc.textContent = tracks.length+' tracks';
+  // private library: enforce login + approval gate
   if(!currentUser){
-    const el=$('tracks-list'); if(el) el.innerHTML=`<div class="empty"><div class="empty-icon">🔒</div><div>Private library — log in</div><button id="empty-login-btn" class="btn btn-main" style="margin-top:8px">Log in</button></div>`;
+    const el=$('tracks-list'); if(el) el.innerHTML=`<div class="empty"><div class="empty-icon">🔒</div><div>Private library — log in to see your tracks</div><button id="empty-login-btn" class="btn btn-main" style="margin-top:8px">Log in</button></div>`;
     setTimeout(()=>{ const b=$('empty-login-btn'); if(b) b.addEventListener('click', ()=> showAuth('login')); },0);
     return;
   }
+  // check approval async — if not approved, loadTracks already gated in initAuth, but handle direct call
+  sb.rpc('is_approved').then(({data})=>{ if(!data){ const el=$('tracks-list'); if(el) el.innerHTML=`<div class="empty"><div class="empty-icon">⏳</div><div>Awaiting approval</div><small style="color:var(--text-tertiary)">Admin will approve your account soon</small></div>`; } }).catch(()=>{});
   renderTracks();
 }
 
@@ -405,11 +437,14 @@ function filteredTracks(){
 async function removeFromPlaylist(pid, tid){
   if(!pid || !tid) return;
   if(!requireAuth()) return;
-  try{
-    await api(`/api/playlist-tracks?playlist_id=${encodeURIComponent(pid)}&track_id=${encodeURIComponent(tid)}`,{method:'DELETE'});
-    toast('Removed from playlist');
-    await loadPlaylists();
-  }catch(e){ toast('Remove failed: '+e.message); }
+  const { error } = await sb.from('playlist_tracks').delete().eq('playlist_id', pid).eq('track_id', tid);
+  if(error){
+    if(error.message.includes('policy') || error.message.includes('permission')) toast('Not allowed — not owner');
+    else toast('Remove failed: '+error.message);
+    return;
+  }
+  toast('Removed from playlist');
+  await loadPlaylists();
 }
 function renderTracks(){
   const list = filteredTracks();
@@ -421,7 +456,7 @@ function renderTracks(){
       el.innerHTML=`<div class="empty"><div class="empty-icon">🔍</div><div>No tracks match</div><small style="color:var(--text-tertiary)">Try clearing search or filter</small><button id="clear-filters-btn" class="btn btn-ghost" style="margin-top:8px">Clear filters</button></div>`;
       setTimeout(()=>{ const b=$('clear-filters-btn'); if(b) b.addEventListener('click', ()=>{ const s=$('search'); if(s) s.value=''; searchQ=''; filter='all'; activePlaylistId=null; document.querySelectorAll('.chip').forEach(c=>{c.classList.remove('active'); c.setAttribute('aria-selected','false')}); const all=document.querySelector('[data-filter=all]'); if(all){all.classList.add('active'); all.setAttribute('aria-selected','true')} updateListHead(); renderPlaylists(); renderTracks(); updateSearchClear(); }); }, 0);
     } else {
-      el.innerHTML=`<div class="empty"><div class="empty-icon">♪</div><div>No tracks yet</div><small style="color:var(--text-tertiary)">Queue a URL — Cloudflare ingests instantly, no laptop</small><button id="empty-queue-btn" class="btn btn-main" style="margin-top:8px">＋ Queue first track</button></div>`;
+      el.innerHTML=`<div class="empty"><div class="empty-icon">♪</div><div>No tracks yet</div><small style="color:var(--text-tertiary)">Queue a URL and run your laptop ingest</small><button id="empty-queue-btn" class="btn btn-main" style="margin-top:8px">＋ Queue first track</button></div>`;
       setTimeout(()=>{ const b=$('empty-queue-btn'); if(b) b.addEventListener('click', ()=> setIngest(true)); }, 0);
     }
     return;
@@ -453,8 +488,11 @@ function renderTracks(){
     node.addEventListener('click', e=>{
       if(e.target.closest('[data-more]') || e.target.closest('[data-play]')) return;
       vibrate(8);
-      if(node.dataset.id === curTrackId) openPlayerSheet();
-      else playTrack(node.dataset.id);
+      if(node.dataset.id === curTrackId){
+        openPlayerSheet();
+      } else {
+        playTrack(node.dataset.id);
+      }
     });
   });
   el.querySelectorAll('[data-play]').forEach(btn=>{
@@ -489,6 +527,7 @@ function openTrackSheet(trackId){
   const head=$('track-sheet-head');
   const art = tr.thumbnail_url ? `<img src="${esc(tr.thumbnail_url)}" alt="">` : `<div style="width:48px;height:48px;background:var(--bg);border:1px solid var(--border);border-radius:6px;display:grid;place-items:center">♪</div>`;
   head.innerHTML=`${art}<div class="as-head-text"><div class="as-head-title">${esc(tr.title)}</div><div class="as-head-sub">${esc(tr.artist||tr.extractor||'')}</div></div>`;
+  // contextual remove — show only if currently viewing that playlist and track is in it
   let removeHtml = '';
   if(activePlaylistId && playlistTracks.some(pt=>pt.playlist_id===activePlaylistId && pt.track_id===trackId)){
     const plName = playlists.find(p=>p.id===activePlaylistId)?.name || 'this playlist';
@@ -538,6 +577,7 @@ $('as-next')?.addEventListener('click', ()=>{
   else if(tr) playTrack(tr.id);
   closeTrackSheet();
 });
+// swipe down to dismiss track sheet
 (function attachSheetSwipe(){
   const sheet=$('track-sheet');
   if(!sheet) return;
@@ -559,17 +599,20 @@ $('as-next')?.addEventListener('click', ()=>{
 // --- Playlists ---
 async function loadPlaylists(){
   if(!currentUser){ playlists=[]; playlistTracks=[]; renderPlaylists(); renderTracks(); return; }
-  try{
-    const data = await api('/api/playlists');
-    playlists=data.playlists||[]; playlistTracks=data.playlist_tracks||[];
-  }catch(e){ console.warn(e.message); }
+  const { data, error } = await sb.from('playlists').select('*').order('created_at');
+  if(error){ console.warn('playlists', error.message); return; }
+  playlists=data||[];
+  const { data: pts, error:e2 } = await sb.from('playlist_tracks').select('*').order('position');
+  if(e2) console.warn(e2.message);
+  playlistTracks = pts||[];
   renderPlaylists();
   renderTracks();
 }
 function renderPlaylists(){
   const el=$('playlists-list');
   if(!el) return;
-  if(!currentUser){ el.innerHTML='<small style="color:var(--text-tertiary)">Log in to make playlists</small>'; return; }
+  if(!currentUser){ el.innerHTML='<small style="color:var(--text-tertiary)">Log in to make your own playlists — library is public to browse</small>'; return; }
+  // build list with All tracks on top
   const allCount = tracks.length;
   const allActive = !activePlaylistId ? 'active' : '';
   let html = `<div class="playlist-item ${allActive}" data-id="">
@@ -591,19 +634,22 @@ function renderPlaylists(){
   el.querySelectorAll('.playlist-item').forEach(n=> n.addEventListener('click', e=>{
     if(e.target.closest('.del-pl')) return;
     const id = n.dataset.id;
+    // toggle: clicking active All stays All, clicking active playlist again goes back to All
     if(id === activePlaylistId){ activePlaylistId = null; }
     else activePlaylistId = id || null;
     const titleEl=$('list-title'); if(titleEl) titleEl.textContent = activePlaylistId ? (playlists.find(p=>p.id===activePlaylistId)?.name || 'Playlist') : 'All tracks';
+    // update header back affordance
     updateListHead();
     renderPlaylists(); renderTracks();
     if(isMobile()) setMobileTab('library');
+    // scroll tracks into view
     if(activePlaylistId) setTimeout(()=> document.querySelector('.main')?.scrollIntoView({behavior:'smooth', block:'start'}), 100);
   }));
   el.querySelectorAll('.del-pl').forEach(b=> b.addEventListener('click', async e=>{
     e.stopPropagation();
     const id=b.dataset.id;
     if(!confirm('Delete playlist?')) return;
-    await api(`/api/playlists?id=${encodeURIComponent(id)}`,{method:'DELETE'});
+    await sb.from('playlists').delete().eq('id', id);
     if(activePlaylistId===id){ activePlaylistId=null; const t=$('list-title'); if(t) t.textContent='All tracks'; updateListHead(); }
     await loadPlaylists();
   }));
@@ -639,24 +685,23 @@ $('create-playlist-btn')?.addEventListener('click', async()=>{
   if(!requireAuth()) return;
   const name=$('new-playlist-name').value.trim();
   if(!name) return toast('Enter name');
-  try{
-    await api('/api/playlists',{method:'POST', body:JSON.stringify({name})});
-    $('new-playlist-name').value=''; await loadPlaylists(); toast('Playlist created');
-  }catch(e){ toast(e.message); }
+  const payload={name}; if(currentUser) payload.owner_id=currentUser.id;
+  const { error } = await sb.from('playlists').insert(payload);
+  if(error) toast(error.message); else { $('new-playlist-name').value=''; await loadPlaylists(); toast('Playlist created');}
 });
 $('new-playlist-name')?.addEventListener('keydown', e=>{ if(e.key==='Enter') $('create-playlist-btn').click(); });
 async function addToPlaylist(pid, tid){
-  try{
-    await api('/api/playlist-tracks',{method:'POST', body:JSON.stringify({playlist_id:pid, track_id:tid})});
-    toast('Added to playlist'); await loadPlaylists(); logEvent('playlist_add', tid, { playlist_id: pid });
-  }catch(e){
-    if(String(e.message).includes('Already')) toast('Already in playlist');
-    else toast(e.message);
-  }
+  const maxPos = Math.max(0, ...playlistTracks.filter(pt=>pt.playlist_id===pid).map(pt=>pt.position));
+  const { error } = await sb.from('playlist_tracks').insert({playlist_id:pid, track_id:tid, position: maxPos+1});
+  if(error) {
+    if(error.message.includes('duplicate')) toast('Already in playlist');
+    else toast(error.message);
+  } else { toast('Added to playlist'); await loadPlaylists(); logEvent('playlist_add', tid, { playlist_id: pid }); }
 }
 
 // --- Player ---
 const audio = $('player');
+const psAudio = audio; // single element
 function buildQueueFromCurrent(startId){
   const list = filteredTracks();
   const idx = list.findIndex(t=>t.id===startId);
@@ -666,16 +711,14 @@ function buildQueueFromCurrent(startId){
 async function playTrack(id){
   const tr = tracks.find(t=>t.id===id);
   if(!tr) return;
-  if(!tr.storage_path){ toast('File missing'); return; }
-  if(!currentUser){ showAuth('login'); toast('Log in to play'); return; }
+  if(!tr.storage_path){ toast('File missing — re-ingest'); return; }
+  if(!currentUser){ showAuth('login'); toast('Log in to play your private tracks'); return; }
   curTrackId=id;
   buildQueueFromCurrent(id);
-  const url = streamUrl(tr);
-  if(!url){ toast('No audio source'); return; }
+  const url = await getSignedUrl(tr.storage_path);
+  if(!url){ toast('File missing'); return; }
   audio.src = url;
-  try{
-    await audio.play();
-  }catch(e){ toast('Playback failed'); console.warn(e); isPlaying=false; syncPlayButtons(); return; }
+  audio.play().catch(e=>{ toast('Playback failed'); console.warn(e); isPlaying=false; syncPlayButtons(); });
   isPlaying=true;
   updatePlayerUI(tr);
   renderTracks();
@@ -689,6 +732,9 @@ async function playTrack(id){
       navigator.mediaSession.setActionHandler('pause', ()=> audio.pause());
       navigator.mediaSession.setActionHandler('nexttrack', next);
       navigator.mediaSession.setActionHandler('previoustrack', prev);
+      navigator.mediaSession.setActionHandler('seekto', d=>{ if(d.seekTime!=null) audio.currentTime=d.seekTime; });
+      navigator.mediaSession.setActionHandler('seekbackward', d=>{ audio.currentTime=Math.max(0,audio.currentTime-(d.seekOffset||10)); });
+      navigator.mediaSession.setActionHandler('seekforward', d=>{ audio.currentTime=Math.min(audio.duration||Infinity, audio.currentTime+(d.seekOffset||10)); });
     } catch {}
   }
 }
@@ -743,7 +789,7 @@ $('repeat-btn-ps')?.addEventListener('click', ()=>{ vibrate(8); setRepeat(!repea
 audio.addEventListener('ended', ()=>{ if(repeat) audio.play().catch(()=>{}); else next(); });
 audio.addEventListener('play', ()=>{ isPlaying=true; syncPlayButtons(); renderTracks(); if('mediaSession' in navigator) try{navigator.mediaSession.playbackState='playing';}catch{} });
 audio.addEventListener('pause', ()=>{ isPlaying=false; syncPlayButtons(); renderTracks(); if('mediaSession' in navigator) try{navigator.mediaSession.playbackState='paused';}catch{} });
-audio.addEventListener('error', ()=>{ toast('Audio load error'); isPlaying=false; syncPlayButtons(); });
+audio.addEventListener('error', ()=>{ toast('Audio load error — file may be missing'); isPlaying=false; syncPlayButtons(); });
 function onTimeUpdate(){
   if(!isFinite(audio.duration)) return;
   const cur=fmtTime(audio.currentTime), dur=fmtTime(audio.duration);
@@ -754,6 +800,7 @@ function onTimeUpdate(){
   if(seek) seek.value=v;
   if(psSeek) psSeek.value=v;
   const fill=$('ps-fill'); if(fill) fill.style.width=(audio.currentTime/audio.duration*100)+'%';
+  // row progress line
   const bar=document.querySelector(`.t-progress-bar[data-bar="${CSS.escape(curTrackId||'')}"]`);
   if(bar) bar.style.width = (audio.currentTime/audio.duration*100) + '%';
   if('mediaSession' in navigator && 'setPositionState' in navigator.mediaSession){
@@ -778,8 +825,7 @@ $('play-all-btn')?.addEventListener('click', ()=>{ vibrate(8); const f=filteredT
 $('cache-btn')?.addEventListener('click', async()=>{
   if(!curTrackId) return toast('Play a track first');
   const tr=tracks.find(t=>t.id===curTrackId);
-  const url=streamUrl(tr);
-  if(!url) return toast('No stream');
+  const url=await getSignedUrl(tr.storage_path);
   try{
     const c=await caches.open('tracks-v1');
     toast('Caching for offline...');
@@ -806,6 +852,7 @@ $('player-expand')?.addEventListener('click', ()=>{ vibrate(8); openPlayerSheet(
 $('ps-close')?.addEventListener('click', ()=>{ vibrate(8); closePlayerSheet(); });
 playerOverlay?.addEventListener('click', closePlayerSheet);
 $('ps-more')?.addEventListener('click', ()=>{ if(curTrackId) openTrackSheet(curTrackId); });
+audio.volume=0.9;
 audio.removeAttribute('crossorigin');
 
 // swipe: down to close + left/right for next/prev
@@ -818,7 +865,9 @@ audio.removeAttribute('crossorigin');
     if(!drag) return;
     dx=e.touches[0].clientX - sx;
     dy=e.touches[0].clientY - sy;
+    // prioritize vertical vs horizontal
     if(Math.abs(dx) > Math.abs(dy)){
+      // horizontal drag — translateX subtle
       if(Math.abs(dx) < 80) playerSheet.style.transform=`translateX(${dx*0.35}px)`;
     } else {
       if(dy>0) playerSheet.style.transform=`translateY(${dy}px)`;
@@ -832,6 +881,14 @@ audio.removeAttribute('crossorigin');
     } else if(dy > TH_Y) closePlayerSheet();
     dx=0; dy=0;
   });
+  // desktop drag with mouse for testing
+  let mx=0, my=0, mdx=0, mdy=0, mdrag=false;
+  const artWrap=document.querySelector('.ps-art-wrap');
+  if(artWrap){
+    artWrap.addEventListener('mousedown', e=>{ mx=e.clientX; my=e.clientY; mdrag=true; });
+    window.addEventListener('mousemove', e=>{ if(!mdrag) return; mdx=e.clientX - mx; mdy=e.clientY - my; });
+    window.addEventListener('mouseup', ()=>{ if(!mdrag) return; mdrag=false; if(Math.abs(mdx) > TH_X && Math.abs(mdx) > Math.abs(mdy)){ if(mdx<0) next(); else prev(); } mdx=0; mdy=0; });
+  }
 })();
 
 // search/filter - debounced
@@ -853,11 +910,18 @@ document.querySelectorAll('.chip').forEach(c=> c.addEventListener('click', ()=>{
 }));
 $('refresh-btn')?.addEventListener('click', async()=>{ await Promise.all([loadTracks(), loadQueue(), loadPlaylists()]); toast('Refreshed'); });
 
-// Polling replaces Supabase Realtime (Cloudflare free has no WS)
-setInterval(()=>{ if(currentUser) { loadQueue(); } }, 10000);
+// --- Realtime ---
+try{
+  sb.channel('music-changes')
+    .on('postgres_changes', {event:'*', schema:'public', table:'tracks'}, ()=> loadTracks())
+    .on('postgres_changes', {event:'*', schema:'public', table:'ingest_queue'}, ()=> loadQueue())
+    .on('postgres_changes', {event:'*', schema:'public', table:'playlists'}, ()=> loadPlaylists())
+    .subscribe();
+}catch{}
 
 // --- Init ---
 loadTracks(); loadQueue(); loadPlaylists();
+setInterval(()=>{ loadQueue(); }, 15000);
 
-// SW — explicit scope
+// SW — explicit scope + error log for Render vs GH Pages
 if('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js', {scope:'./'}).catch(e=>console.warn('SW fail',e));

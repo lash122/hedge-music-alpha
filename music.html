@@ -9,7 +9,7 @@
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="apple-mobile-web-app-title" content="Hedge Music">
-  <meta name="description" content="Personal music library — Supabase + laptop ingest">
+  <meta name="description" content="Personal music library — Cloudflare D1+R2, no laptop ingest">
   <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png">
   <link rel="apple-touch-icon" href="icons/icon-192.png">
   <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -55,7 +55,7 @@
         <h2>Queue</h2>
         <button id="close-ingest" class="btn btn-ghost">Close</button>
       </div>
-      <p class="sub">Paste any link. Queued as pending, ingested when laptop runs <code>node tools/ingest.js --watch</code>.</p>
+       <p class="sub">Paste any link. Cloudflare ingests instantly — no laptop needed.</p>
       <div class="ingest-row">
         <div class="input-wrap">
           <input id="yt-url" type="url" placeholder="Paste link — youtube, soundcloud, bandcamp..." autocomplete="off" spellcheck="false" enterkeyhint="done">
@@ -206,12 +206,12 @@
     <div style="display:flex;flex-direction:column;gap:12px">
       <div class="card" style="padding:14px">
         <h4 style="font-size:12px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:var(--text-secondary);margin-bottom:8px">Server / Ingestion</h4>
-        <p class="sub" style="margin-bottom:8px">Phone queues → <code>ingest_queue</code> <code>pending</code>. Laptop polls, runs <code>yt-dlp -x --audio-format mp3</code> + <code>ffmpeg</code>, uploads to Supabase <code>tracks</code> bucket. PWA live-updates via Realtime.</p>
-        <p class="sub" style="margin-bottom:0">Run on laptop: <code>node tools/ingest.js --watch</code></p>
+        <p class="sub" style="margin-bottom:8px">Phone queues → Cloudflare Worker fetches metadata via <code>noembed</code> + stores in D1, optional R2 for direct mp3. No yt-dlp/ffmpeg polling.</p>
+        <p class="sub" style="margin-bottom:0">Cloudflare only: <code>queue → done in one request</code></p>
       </div>
       <div class="card" style="padding:14px">
         <h4 style="font-size:12px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:var(--text-secondary);margin-bottom:8px">Storage</h4>
-        <p class="sub" style="margin-bottom:0"><span id="settings-storage">1GB • ~200 tracks</span> — Supabase <code>tracks</code> bucket, public read.</p>
+        <p class="sub" style="margin-bottom:0"><span id="settings-storage">10GB • ~2000 tracks</span> — Cloudflare <code>R2</code> bucket + D1, private signed stream.</p>
       </div>
     </div>
   </div>
@@ -267,7 +267,7 @@
     <button id="pwa-ios-dismiss" class="btn btn-ghost" style="padding:8px 12px">✕</button>
   </div>
 
-  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-  <script src="music.js?v=27" defer></script>
+  <!-- Cloudflare Alpha: no Supabase CDN, pure Worker API -->
+  <script src="music.js?v=cf1" defer></script>
 </body>
 </html>

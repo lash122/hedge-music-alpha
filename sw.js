@@ -1,4 +1,4 @@
-const CACHE = 'hedge-music-v8';
+const CACHE = 'hedge-music-cf-v1';
 const APP_SHELL = [
   './',
   './index.html',
@@ -25,10 +25,10 @@ self.addEventListener('fetch', e=>{
   const {request} = e;
   if(request.method!=='GET') return;
   const url = new URL(request.url);
-  // Supabase API/storage should be network-first (fresh tracks/queue)
-  if(url.hostname.includes('supabase.co')){
-    // Cache MP3s for offline after first play if user clicks cache — handles public and private (signed) URLs, skip Range requests
-    if(url.pathname.includes('/storage/v1/object/') && url.pathname.includes('/tracks/')){
+  // Cloudflare API — never cache, always network
+  if(url.pathname.startsWith('/api/')){
+    // MP3/stream: cache after first play for offline
+    if(url.pathname.includes('/api/stream')){
       if(request.headers.has('range')) return;
       e.respondWith(caches.match(request).then(cached=> cached || fetch(request).then(r=>{
         const copy=r.clone();
@@ -37,8 +37,10 @@ self.addEventListener('fetch', e=>{
       })));
       return;
     }
-    return; // other supabase -> network only
+    return; // other api -> network only
   }
+  // Legacy Supabase: bypass if still requested (no longer used)
+  if(url.hostname.includes('supabase.co')) return;
   if(url.origin!==self.location.origin) return;
   if(request.mode==='navigate'){
     e.respondWith(fetch(request).then(r=>{ const c=r.clone(); caches.open(CACHE).then(cache=>cache.put(request,c)); return r; }).catch(()=>caches.match(request).then(c=>c||caches.match('./music.html'))));

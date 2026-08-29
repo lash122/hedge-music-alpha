@@ -1,0 +1,27 @@
+name = "hedge-music-alpha"
+type = "javascript"
+compatibility_date = "2024-11-01"
+pages_build_output_dir = "."
+
+# Cloudflare Free Tier: Pages + D1 + R2 + KV
+# No build step, no Supabase, no laptop ingest
+
+[[d1_databases]]
+binding = "DB"
+database_name = "hedge-music-alpha-db"
+database_id = "hedge-music-alpha-db"
+
+[[r2_buckets]]
+binding = "R2"
+bucket_name = "hedge-music-tracks"
+
+[[kv_namespaces]]
+binding = "SESSIONS"
+id = "sessions-kv-placeholder"
+preview_id = "sessions-kv-placeholder"
+
+[vars]
+ENV = "production"
+
+# Pages Functions live in ./functions/
+# npm install not required — pure Workers runtime
