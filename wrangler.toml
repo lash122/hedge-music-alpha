@@ -2,12 +2,9 @@ name = "hedge-music-alpha"
 compatibility_date = "2024-11-01"
 pages_build_output_dir = "."
 
-[assets]
-directory = "."
-not_found_handling = "single-page-application"
-
-# Cloudflare Free Tier: Pages + D1 + R2 + KV
-# No build step, no Supabase, no laptop ingest
+# This is a Cloudflare PAGES project (functions/ = Pages Functions).
+# Deploy with `wrangler pages deploy .` or Pages Git integration.
+# Do NOT use `wrangler deploy` (that is Workers, which ignores functions/).
 
 [[d1_databases]]
 binding = "DB"
@@ -25,6 +22,3 @@ preview_id = "sessions-kv-placeholder"
 
 [vars]
 ENV = "production"
-
-# Pages Functions live in ./functions/
-# npm install not required — pure Workers runtime
