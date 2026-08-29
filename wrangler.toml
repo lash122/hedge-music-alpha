@@ -1,11 +1,10 @@
 name = "hedge-music-alpha"
 compatibility_date = "2024-11-01"
+pages_build_output_dir = "."
 
 [assets]
 directory = "."
 not_found_handling = "single-page-application"
-
-# For `wrangler deploy` (Workers Assets). For Pages use `wrangler pages deploy .` instead.
 
 # Cloudflare Free Tier: Pages + D1 + R2 + KV
 # No build step, no Supabase, no laptop ingest
