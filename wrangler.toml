@@ -9,7 +9,7 @@ pages_build_output_dir = "."
 [[d1_databases]]
 binding = "DB"
 database_name = "hedge-music-alpha-db"
-database_id = "hedge-music-alpha-db"
+database_id = "4b3819b9-62bd-45c7-9b88-3a2c52c85372"
 
 [[r2_buckets]]
 binding = "R2"
@@ -17,8 +17,8 @@ bucket_name = "hedge-music-tracks"
 
 [[kv_namespaces]]
 binding = "SESSIONS"
-id = "sessions-kv-placeholder"
-preview_id = "sessions-kv-placeholder"
+id = "f5e4f69f28474d899ca4c2084c1fea9f"
+preview_id = "f5e4f69f28474d899ca4c2084c1fea9f"
 
 [vars]
 ENV = "production"
