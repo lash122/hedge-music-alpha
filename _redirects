@@ -1,3 +1,0 @@
-# Cloudflare Workers Assets handles SPA via not_found_handling = single-page-application
-# No /* -> /index.html needed here (causes infinite loop code 100324)
-/api/* /api/:splat 200
