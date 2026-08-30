@@ -127,12 +127,22 @@ async function checkAdmin(){
     return false;
   }
   try{
-    const r=await api('/api/admin?action=is_admin');
-    if(!r.isAdmin){
+    let isAdminFlag=false;
+    try{
+      const r=await api('/api/admin?action=is_admin');
+      isAdminFlag=!!r.isAdmin;
+    }catch(e2){
+      // 403 "Admin only" = logged in but not admin -> show bootstrap button
+      isAdminFlag=false;
+    }
+    if(!isAdminFlag){
       status.textContent='not admin'; status.style.color='var(--danger)';
-      msg.innerHTML=`Logged in as <b>${esc(currentUser.email)}</b> but not admin. Click <b>Make me admin</b> if you are first user.`;
+      msg.innerHTML=`Logged in as <b>${esc(currentUser.email)}</b> but not admin. Click <b>Make me admin</b> if you are the first user.`;
       acts.innerHTML=`<button id="gate-seed" class="btn btn-main">Make me admin</button><button id="gate-recheck" class="btn btn-ghost">Recheck</button>`;
-      $('gate-seed')?.addEventListener('click', async()=>{ await api('/api/admin?action=seed_admin',{method:'POST'}); toast('Admin granted'); location.reload(); });
+      $('gate-seed')?.addEventListener('click', async()=>{
+        try{ await api('/api/admin?action=seed_admin',{method:'POST'}); toast('Admin granted'); location.reload(); }
+        catch(e){ toast(e.message); }
+      });
       $('gate-recheck')?.addEventListener('click', checkAdmin);
       dash.style.display='none';
       return false;

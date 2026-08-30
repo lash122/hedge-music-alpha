@@ -5,9 +5,22 @@ export async function onRequest({ request, env }) {
   const { user } = await requireAuth(env, request);
   if (!user) return json({ error: 'Auth required' }, 401);
   const adminRow = await env.DB.prepare('SELECT 1 FROM admin_users WHERE user_id=?').bind(user.id).first();
-  if (!adminRow) return json({ error: 'Admin only' }, 403);
+  const isAdmin = !!adminRow;
   const url = new URL(request.url);
   const action = url.searchParams.get('action');
+
+  // BOOTSTRAP: first-ever user claims admin before the gate blocks them.
+  // Only allowed when NO admin exists yet, so it can never be abused later.
+  if (action === 'seed_admin' && request.method === 'POST') {
+    if (isAdmin) return json({ ok: true, already: true });
+    const anyAdmin = await env.DB.prepare('SELECT 1 FROM admin_users LIMIT 1').first();
+    if (anyAdmin) return json({ error: 'An admin already exists' }, 403);
+    await env.DB.prepare('INSERT OR IGNORE INTO admin_users(user_id) VALUES(?)').bind(user.id).run();
+    await env.DB.prepare('INSERT OR IGNORE INTO approved_users(user_id) VALUES(?)').bind(user.id).run();
+    return json({ ok: true });
+  }
+
+  if (!isAdmin) return json({ error: 'Admin only' }, 403);
 
   if (action === 'is_admin') return json({ isAdmin: true });
   if (action === 'pending') {
@@ -48,12 +61,6 @@ export async function onRequest({ request, env }) {
   if (action === 'queue') {
     const { results } = await env.DB.prepare('SELECT original_url,status,error,created_at FROM ingest_queue ORDER BY created_at DESC LIMIT 20').all();
     return json(results || []);
-  }
-  // seed admin helper
-  if (action === 'seed_admin' && request.method === 'POST') {
-    await env.DB.prepare('INSERT OR IGNORE INTO admin_users(user_id) VALUES(?)').bind(user.id).run();
-    await env.DB.prepare('INSERT OR IGNORE INTO approved_users(user_id) VALUES(?)').bind(user.id).run();
-    return json({ ok: true });
   }
 
   return json({ error: 'Unknown action' }, 400);
