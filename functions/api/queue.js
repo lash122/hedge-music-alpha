@@ -41,11 +41,17 @@ export async function onRequest({ request, env }) {
       const [meta, direct] = await Promise.all([fetchMetadata(original_url), fetchDirectAudio(original_url)]);
       const extractor = meta.extractor || 'unknown';
       const extractor_id = original_url.slice(0, 80); // simple dedup key
-      // dedup check
-      const dup = await env.DB.prepare('SELECT id FROM tracks WHERE original_url=?').bind(original_url).first();
+      // dedup check — but BACKFILL direct_url/thumbnail/duration if the old row lacks them
+      const dup = await env.DB.prepare('SELECT id, direct_url, duration_sec, thumbnail_url FROM tracks WHERE original_url=?').bind(original_url).first();
       if (dup) {
+        if (!dup.direct_url && direct?.directUrl) {
+          try {
+            await env.DB.prepare('UPDATE tracks SET direct_url=?, direct_url_fetched_at=?, duration_sec=COALESCE(duration_sec,?), thumbnail_url=COALESCE(thumbnail_url,?) WHERE id=?')
+              .bind(direct.directUrl, new Date().toISOString(), direct.duration || null, direct.thumbnail || null, dup.id).run();
+          } catch {}
+        }
         await env.DB.prepare('UPDATE ingest_queue SET status=?, extractor=?, extractor_id=? WHERE id=?').bind('done', extractor, extractor_id, id).run();
-        return json({ ok: true, queueId: id, trackId: dup.id, dedup: true, status: 'done' });
+        return json({ ok: true, queueId: id, trackId: dup.id, dedup: true, status: 'done', playable: !!direct?.directUrl });
       }
       // Try to fetch actual audio and store in R2 (no ffmpeg, store as original)
       let storage_path = `${user.id}/${extractor}-${id.slice(0, 8)}.mp3`;
