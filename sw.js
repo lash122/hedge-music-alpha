@@ -1,4 +1,4 @@
-const CACHE = 'hedge-music-cf-v1';
+const CACHE = 'hedge-music-cf-v3'; // bumped: forces stale SW clients to refresh
 const APP_SHELL = [
   './',
   './index.html',
