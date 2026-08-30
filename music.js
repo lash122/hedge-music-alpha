@@ -330,7 +330,10 @@ async function queueNow(){
     $('yt-url').value='';
     if(data.dedup) { $('queue-status').textContent='✓ Already in library'; $('queue-status').className='status ok'; }
     else { $('queue-status').textContent=`✓ Added: ${data.title||'track'} — no laptop needed!`; $('queue-status').className='status ok'; }
-    toast(data.dedup ? 'Already in library' : 'Added — Cloudflare ingested, no laptop!');
+    const msg = data.dedup ? 'Already in library'
+      : (data.playable === false ? 'Added — will play via YouTube embed (tap it)'
+      : 'Added — Cloudflare ingested, no laptop!');
+    toast(msg);
     if(isMobile()) setMobileTab('queue');
     await Promise.all([loadQueue(), loadTracks()]);
     logEvent('queue', data.trackId, { url: url.slice(0,120) });
