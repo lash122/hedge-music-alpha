@@ -1,4 +1,4 @@
-import { json, uuid, requireAuth, isApproved, fetchMetadata } from '../_utils.js';
+import { json, uuid, requireAuth, isApproved, fetchMetadata, fetchDirectAudio } from '../_utils.js';
 
 export async function onRequest({ request, env }) {
   if (request.method === 'OPTIONS') return new Response(null, { headers: { 'access-control-allow-origin': '*', 'access-control-allow-methods': 'GET,POST,DELETE,OPTIONS', 'access-control-allow-headers': 'content-type,authorization' } });
@@ -37,7 +37,8 @@ export async function onRequest({ request, env }) {
     // This is the key difference: queue -> done in same request
     try {
       await env.DB.prepare('UPDATE ingest_queue SET status=? WHERE id=?').bind('processing', id).run();
-      const meta = await fetchMetadata(original_url);
+      // metadata + direct playable URL in parallel (Piped instances for YouTube playback)
+      const [meta, direct] = await Promise.all([fetchMetadata(original_url), fetchDirectAudio(original_url)]);
       const extractor = meta.extractor || 'unknown';
       const extractor_id = original_url.slice(0, 80); // simple dedup key
       // dedup check
@@ -49,11 +50,9 @@ export async function onRequest({ request, env }) {
       // Try to fetch actual audio and store in R2 (no ffmpeg, store as original)
       let storage_path = `${user.id}/${extractor}-${id.slice(0, 8)}.mp3`;
       let file_size = null;
-      let duration_sec = null;
-      let thumb = meta.thumbnail;
-      // For YouTube: we can't fetch googlevideo without yt-dlp, so store placeholder and use oembed thumb
-      // For R2 demo: create a tiny placeholder if R2 available, or skip upload and store metadata only
-      // Attempt to fetch audio stream if URL is direct mp3
+      let duration_sec = direct?.duration || null;
+      let thumb = direct?.thumbnail || meta.thumbnail;
+      // Playback source: direct .mp3 links get pulled into R2; YouTube gets a Piped direct_url redirect
       if (/\.(mp3|m4a|ogg|wav|flac)(\?|$)/i.test(original_url)) {
         try {
           const r = await fetch(original_url);
@@ -66,19 +65,19 @@ export async function onRequest({ request, env }) {
           }
         } catch {}
       } else {
-        // No direct file: store without R2 object, playback will use /api/stream proxy that returns original URL
-        // Keep storage_path as logical key, no R2 object needed for MVP
+        // No R2 object — /api/stream 302-redirects to direct_url (Piped proxy) at play time
         file_size = null;
       }
       const title = meta.title || 'Unknown';
       const artist = meta.artist || '';
       const trackId = uuid();
-      await env.DB.prepare('INSERT INTO tracks(id,original_url,extractor,extractor_id,title,artist,thumbnail_url,storage_path,duration_sec,file_size,owner_id) VALUES(?,?,?,?,?,?,?,?,?,?,?)')
-        .bind(trackId, original_url, extractor, extractor_id, title, artist, thumb, storage_path, duration_sec, file_size, user.id).run();
+      await env.DB.prepare('INSERT INTO tracks(id,original_url,extractor,extractor_id,title,artist,thumbnail_url,storage_path,duration_sec,file_size,owner_id,direct_url,direct_url_fetched_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)')
+        .bind(trackId, original_url, extractor, extractor_id, title, artist, thumb, storage_path, duration_sec, file_size, user.id, direct?.directUrl || null, new Date().toISOString()).run();
       await env.DB.prepare('UPDATE ingest_queue SET status=?, extractor=?, extractor_id=? WHERE id=?').bind('done', extractor, extractor_id, id).run();
       // analytics queue event
       try { await env.DB.prepare('INSERT INTO track_events(id,track_id,user_id,event,meta) VALUES(?,?,?,?,?)').bind(uuid(), trackId, user.id, 'queue', JSON.stringify({ url: original_url.slice(0, 120) })).run(); } catch {}
-      return json({ ok: true, queueId: id, trackId, status: 'done', title });
+      const playable = !!(direct?.directUrl);
+      return json({ ok: true, queueId: id, trackId, status: 'done', title, playable });
     } catch (e) {
       const msg = String(e.message || e).slice(0, 500);
       await env.DB.prepare('UPDATE ingest_queue SET status=?, error=? WHERE id=?').bind('error', msg, id).run();

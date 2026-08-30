@@ -1,4 +1,4 @@
-import { requireAuth, isApproved } from '../_utils.js';
+import { fetchDirectAudio } from '../_utils.js';
 
 export async function onRequest({ request, env }) {
   const url = new URL(request.url);
@@ -8,20 +8,7 @@ export async function onRequest({ request, env }) {
   const track = await env.DB.prepare('SELECT * FROM tracks WHERE id=?').bind(id).first();
   if (!track) return new Response('Not found', { status: 404 });
 
-  // Auth check: global shared => need approved
-  const auth = request.headers.get('authorization') || '';
-  const cookie = request.headers.get('cookie') || '';
-  const token = auth.startsWith('Bearer ') ? auth.slice(7) : (cookie.match(/hm_token=([^;]+)/)?.[1] || null);
-  let user = null;
-  if (token) {
-    try {
-      const row = await env.DB.prepare('SELECT user_id FROM sessions WHERE token=?').bind(decodeURIComponent(token)).first();
-      if (row) user = await env.DB.prepare('SELECT id FROM users WHERE id=?').bind(row.user_id).first();
-    } catch {}
-  }
-  // For stream, allow if track exists — but check approval if user present, else allow for demo
-  // Private mode: require auth, here we allow with check
-  // Try R2 first
+  // 1. R2 first (direct .mp3 uploads + cached files)
   if (track.storage_path && env.R2) {
     try {
       const obj = await env.R2.get(track.storage_path);
@@ -30,7 +17,6 @@ export async function onRequest({ request, env }) {
         headers.set('content-type', obj.httpMetadata?.contentType || 'audio/mpeg');
         headers.set('cache-control', 'public, max-age=3600');
         headers.set('accept-ranges', 'bytes');
-        // Handle Range
         const range = request.headers.get('range');
         if (range) {
           const m = range.match(/bytes=(\d+)-(\d*)/);
@@ -49,11 +35,36 @@ export async function onRequest({ request, env }) {
       }
     } catch {}
   }
-  // Fallback: if original_url is direct mp3, redirect/proxy
-  if (track.original_url && /\.(mp3|m4a|ogg|wav|flac)(\?|$)/i.test(track.original_url)) {
-    return Response.redirect(track.original_url, 302);
+
+  // 2. direct_url (Piped proxy, combined mp4/audio) — 302 so the browser streams it directly.
+  //    googlevideo/Piped URLs expire (~6h), so refresh on demand if stale (older than 3h) or dead.
+  if (track.direct_url) {
+    const fetchedAt = track.direct_url_fetched_at ? new Date(track.direct_url_fetched_at).getTime() : 0;
+    const ageH = (Date.now() - fetchedAt) / 3600000;
+    if (ageH < 3) {
+      return new Response(null, { status: 302, headers: { location: track.direct_url, 'cache-control': 'no-store' } });
+    }
+    // stale -> re-resolve via Piped
+    const fresh = await fetchDirectAudio(track.original_url);
+    if (fresh?.directUrl) {
+      try {
+        await env.DB.prepare('UPDATE tracks SET direct_url=?, direct_url_fetched_at=? WHERE id=?')
+          .bind(fresh.directUrl, new Date().toISOString(), track.id).run();
+      } catch {}
+      return new Response(null, { status: 302, headers: { location: fresh.directUrl, 'cache-control': 'no-store' } });
+    }
+    // re-resolve failed (all instances down?) -> serve stale rather than fail
+    return new Response(null, { status: 302, headers: { location: track.direct_url, 'cache-control': 'no-store' } });
   }
-  // For YouTube etc without R2 object: return 302 to original_url (let player handle fallback) or 404
-  // For alpha: return JSON with original_url so frontend can show
-  return new Response(JSON.stringify({ error: 'No stored file — use original_url', original_url: track.original_url }), { status: 404, headers: { 'content-type': 'application/json' } });
+
+  // 3. original_url as direct file (user queued an .mp3 link but R2 upload failed)
+  if (track.original_url && /\.(mp3|m4a|ogg|wav|flac)(\?|$)/i.test(track.original_url)) {
+    return new Response(null, { status: 302, headers: { location: track.original_url, 'cache-control': 'no-store' } });
+  }
+
+  // 4. nothing playable (metadata-only queue) — client shows a helpful toast
+  return new Response(JSON.stringify({ error: 'No playable source', original_url: track.original_url }), {
+    status: 404,
+    headers: { 'content-type': 'application/json' },
+  });
 }

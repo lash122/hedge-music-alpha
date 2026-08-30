@@ -93,6 +93,48 @@ export async function fetchMetadata(url) {
   // fallback: use URL itself
   return { title: url.slice(0, 80), artist: detectExtractor(url), thumbnail: null, extractor: detectExtractor(url) };
 }
+
+// YouTube video ID from any URL shape (watch?v=, youtu.be/, shorts/, embed/)
+export function youtubeId(url) {
+  try {
+    const u = new URL(url);
+    if (u.hostname.includes('youtu.be')) return u.pathname.slice(1, 12) || null;
+    if (u.searchParams.get('v')) return u.searchParams.get('v').slice(0, 11);
+    const m = u.pathname.match(/(shorts|embed)\/([A-Za-z0-9_-]{11})/);
+    if (m) return m[2];
+  } catch {}
+  return null;
+}
+
+// Direct playable URL via Piped public instances (free, no yt-dlp).
+// Returns { directUrl, duration, thumbnail } or null. Tries instances in order.
+// NOTE: these proxies serve a combined 360p mp4 (video+audio) — <audio> plays it fine.
+const PIPED_INSTANCES = [
+  'https://api.piped.private.coffee',
+  'https://pipedapi.adminforge.de',
+  'https://api.piped.projectsegfau.lt',
+];
+export async function fetchDirectAudio(url) {
+  const vid = youtubeId(url);
+  if (!vid) return null; // only YouTube supported for direct playback
+  for (const inst of PIPED_INSTANCES) {
+    try {
+      const r = await fetch(inst + '/streams/' + vid, {
+        headers: { accept: 'application/json' },
+        cf: { cacheTtl: 3600, cacheEverything: false },
+        signal: AbortSignal.timeout(6000),
+      });
+      if (!r.ok) continue;
+      const d = await r.json();
+      const audio = (d.audioStreams || []).filter(a => a.url && (a.mimeType || '').includes('audio')).sort((a, b) => (b.bitrate || 0) - (a.bitrate || 0))[0];
+      if (audio && audio.url) return { directUrl: audio.url, duration: d.duration || null, thumbnail: d.thumbnailUrl || null };
+      // no audio-only streams (LBRY-era instances) -> combined 360p mp4 has sound
+      const combined = (d.videoStreams || []).find(v => v.url && (v.mimeType || '').includes('mp4') && v.videoOnly === false && v.quality === '360p');
+      if (combined && combined.url) return { directUrl: combined.url, duration: d.duration || null, thumbnail: d.thumbnailUrl || null };
+    } catch {}
+  }
+  return null;
+}
 function detectExtractor(url) {
   try {
     const h = new URL(url).hostname;

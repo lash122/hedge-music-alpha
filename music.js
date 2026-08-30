@@ -666,16 +666,22 @@ function buildQueueFromCurrent(startId){
 async function playTrack(id){
   const tr = tracks.find(t=>t.id===id);
   if(!tr) return;
-  if(!tr.storage_path){ toast('File missing'); return; }
   if(!currentUser){ showAuth('login'); toast('Log in to play'); return; }
   curTrackId=id;
   buildQueueFromCurrent(id);
   const url = streamUrl(tr);
   if(!url){ toast('No audio source'); return; }
   audio.src = url;
+  audio.load();
   try{
     await audio.play();
-  }catch(e){ toast('Playback failed'); console.warn(e); isPlaying=false; syncPlayButtons(); return; }
+  }catch(e){
+    // 302 to Piped proxy can fail if the instance is down — try the original page as a last resort hint
+    console.warn(e);
+    isPlaying=false; syncPlayButtons();
+    toast('Playback failed — source may be down. Try re-queueing the track.');
+    return;
+  }
   isPlaying=true;
   updatePlayerUI(tr);
   renderTracks();
@@ -743,7 +749,7 @@ $('repeat-btn-ps')?.addEventListener('click', ()=>{ vibrate(8); setRepeat(!repea
 audio.addEventListener('ended', ()=>{ if(repeat) audio.play().catch(()=>{}); else next(); });
 audio.addEventListener('play', ()=>{ isPlaying=true; syncPlayButtons(); renderTracks(); if('mediaSession' in navigator) try{navigator.mediaSession.playbackState='playing';}catch{} });
 audio.addEventListener('pause', ()=>{ isPlaying=false; syncPlayButtons(); renderTracks(); if('mediaSession' in navigator) try{navigator.mediaSession.playbackState='paused';}catch{} });
-audio.addEventListener('error', ()=>{ toast('Audio load error'); isPlaying=false; syncPlayButtons(); });
+audio.addEventListener('error', ()=>{ toast('Audio source unreachable — re-queue the track'); isPlaying=false; syncPlayButtons(); });
 function onTimeUpdate(){
   if(!isFinite(audio.duration)) return;
   const cur=fmtTime(audio.currentTime), dur=fmtTime(audio.duration);
