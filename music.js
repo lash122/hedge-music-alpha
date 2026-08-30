@@ -664,6 +664,7 @@ function buildQueueFromCurrent(startId){
   window._playQueue = list;
 }
 async function playTrack(id){
+  if(ytEmbedActive) hideYoutubeEmbed();
   const tr = tracks.find(t=>t.id===id);
   if(!tr) return;
   if(!currentUser){ showAuth('login'); toast('Log in to play'); return; }
@@ -749,7 +750,59 @@ $('repeat-btn-ps')?.addEventListener('click', ()=>{ vibrate(8); setRepeat(!repea
 audio.addEventListener('ended', ()=>{ if(repeat) audio.play().catch(()=>{}); else next(); });
 audio.addEventListener('play', ()=>{ isPlaying=true; syncPlayButtons(); renderTracks(); if('mediaSession' in navigator) try{navigator.mediaSession.playbackState='playing';}catch{} });
 audio.addEventListener('pause', ()=>{ isPlaying=false; syncPlayButtons(); renderTracks(); if('mediaSession' in navigator) try{navigator.mediaSession.playbackState='paused';}catch{} });
-audio.addEventListener('error', ()=>{ toast('Audio source unreachable — re-queue the track'); isPlaying=false; syncPlayButtons(); });
+// YouTube iframe fallback: music videos are bot-blocked on anonymous proxies in 2026,
+// so when direct stream fails we play the official YouTube embed instead.
+function youtubeId(url){
+  try{
+    const u=new URL(url);
+    if(u.hostname.includes('youtu.be')) return u.pathname.slice(1,12).split('/')[0]||null;
+    if(u.searchParams.get('v')) return u.searchParams.get('v').slice(0,11);
+    const m=u.pathname.match(/(shorts|embed)\/([A-Za-z0-9_-]{11})/);
+    if(m) return m[2];
+  }catch{}
+  return null;
+}
+let ytEmbedActive=false;
+function showYoutubeEmbed(tr){
+  const vid=youtubeId(tr.original_url);
+  if(!vid) return false;
+  let ov=$('yt-embed-overlay');
+  if(!ov){
+    ov=document.createElement('div');
+    ov.id='yt-embed-overlay';
+    ov.style.cssText='position:fixed;inset:0;z-index:1400;background:rgba(0,0,0,.92);display:flex;align-items:center;justify-content:center;flex-direction:column;gap:14px;padding:20px';
+    document.body.appendChild(ov);
+  }
+  ov.innerHTML=`
+    <div style="max-width:640px;width:100%;text-align:center">
+      <div style="color:#eee;font-size:13px;margin-bottom:10px">${esc(tr.title)}</div>
+      <iframe id="yt-embed-frame" width="100%" height="360" style="border-radius:12px;border:1px solid #333;max-width:640px"
+        src="https://www.youtube-nocookie.com/embed/${esc(vid)}?autoplay=1&rel=0"
+        allow="autoplay; encrypted-media" allowfullscreen frameborder="0"></iframe>
+      <div style="color:#888;font-size:11px;margin-top:10px">Direct audio is unavailable for this video (YouTube blocks anonymous music streams) — playing the official embed instead.</div>
+      <button id="yt-embed-close" class="btn btn-ghost" style="margin-top:12px">✕ Close player</button>
+    </div>`;
+  ov.style.display='flex';
+  ytEmbedActive=true;
+  const close=$('yt-embed-close');
+  if(close) close.addEventListener('click', hideYoutubeEmbed);
+  isPlaying=true; syncPlayButtons(); updatePlayerUI(tr); renderTracks();
+  return true;
+}
+function hideYoutubeEmbed(){
+  const ov=$('yt-embed-overlay');
+  if(ov){ ov.style.display='none'; ov.innerHTML=''; }
+  ytEmbedActive=false;
+  isPlaying=false; syncPlayButtons(); renderTracks();
+}
+audio.addEventListener('error', ()=>{
+  const tr=tracks.find(t=>t.id===curTrackId);
+  isPlaying=false; syncPlayButtons();
+  if(tr && (tr.extractor==='youtube' || /youtube|youtu\.be/.test(tr.original_url))){
+    if(showYoutubeEmbed(tr)){ toast('Playing via YouTube embed'); return; }
+  }
+  toast('Audio source unreachable — try re-queueing');
+});
 function onTimeUpdate(){
   if(!isFinite(audio.duration)) return;
   const cur=fmtTime(audio.currentTime), dur=fmtTime(audio.duration);
