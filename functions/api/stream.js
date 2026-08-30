@@ -38,6 +38,18 @@ export async function onRequest({ request, env }) {
 
   // 2. direct_url (Piped proxy, combined mp4/audio) — 302 so the browser streams it directly.
   //    googlevideo/Piped URLs expire (~6h), so refresh on demand if stale (older than 3h) or dead.
+  //    ALSO: if queue-time resolution failed (direct_url NULL), try again here — instances flap minute to minute,
+  //    so a track that failed to resolve at queue time can still resolve at play time.
+  if (!track.direct_url) {
+    const fresh = await fetchDirectAudio(track.original_url);
+    if (fresh?.directUrl) {
+      try {
+        await env.DB.prepare('UPDATE tracks SET direct_url=?, direct_url_fetched_at=?, duration_sec=COALESCE(duration_sec,?), thumbnail_url=COALESCE(thumbnail_url,?) WHERE id=?')
+          .bind(fresh.directUrl, new Date().toISOString(), fresh.duration || null, fresh.thumbnail || null, track.id).run();
+      } catch {}
+      return new Response(null, { status: 302, headers: { location: fresh.directUrl, 'cache-control': 'no-store' } });
+    }
+  }
   if (track.direct_url) {
     const fetchedAt = track.direct_url_fetched_at ? new Date(track.direct_url_fetched_at).getTime() : 0;
     const ageH = (Date.now() - fetchedAt) / 3600000;
