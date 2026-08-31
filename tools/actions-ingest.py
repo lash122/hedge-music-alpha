@@ -135,13 +135,15 @@ def main():
                 print('  [debug] version check failed:', str(e)[:150])
             try:
                 import subprocess as sp
-                vv = sp.run(['yt-dlp', '-v', '--simulate', 'https://www.youtube.com/watch?v=B4EkwueekvI'],
-                            capture_output=True, text=True, timeout=120)
-                for l in (vv.stderr or '').splitlines():
-                    if 'pot' in l.lower() or 'plugin' in l.lower() or 'provider' in l.lower():
-                        print('  [pot-debug]', l.strip()[:160])
-                if not any('pot' in l.lower() for l in (vv.stderr or '').splitlines()):
-                    print('  [pot-debug] NO pot/plugin lines at all')
+                vv = sp.run(['yt-dlp', '-v', '--print-json', '--no-download', '--no-playlist',
+                             'https://www.youtube.com/watch?v=B4EkwueekvI'],
+                            capture_output=True, text=True, timeout=180)
+                err_lines = (vv.stderr or '').splitlines()
+                keep = [l for l in err_lines if any(k in l.lower() for k in
+                         ('pot', 'provider', 'plugin', 'token', 'bot', 'login', 'client', 'challenge', 'js runtime'))]
+                for l in keep[:25]:
+                    print('  [pot-debug]', l.strip()[:200])
+                print('  [pot-debug] exit:', vv.returncode, '| stderr lines:', len(err_lines))
             except Exception as e:
                 print('  [pot-debug] failed:', str(e)[:150])
             home = os.path.expanduser('~')
