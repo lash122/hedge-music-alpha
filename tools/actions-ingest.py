@@ -49,8 +49,8 @@ def yt_meta(url):
     'Sign in to confirm you're not a bot' on the default web client; alternate
     player clients often skip that attestation."""
     errs = []
-    for client in (['-tvc', 'default'], ['--extractor-args', 'youtube:player_client=tv'],
-                   ['--extractor-args', 'youtube:player_client=web_embedded'],
+    for client in (['--extractor-args', 'youtube:player_client=android'],
+                   ['--extractor-args', 'youtube:player_client=tv'],
                    ['--extractor-args', 'youtube:player_client=mweb']):
         try:
             out = run(['yt-dlp', '--print-json', '--no-download', '--no-playlist',
@@ -64,8 +64,8 @@ def yt_meta(url):
 def yt_download(url, client):
     """Download audio mp3, retrying across the same client cascade."""
     base = '/tmp/ing'
-    for c in (client, ['--extractor-args', 'youtube:player_client=tv'],
-              ['--extractor-args', 'youtube:player_client=web_embedded'],
+    for c in (client, ['--extractor-args', 'youtube:player_client=android'],
+              ['--extractor-args', 'youtube:player_client=tv'],
               ['--extractor-args', 'youtube:player_client=mweb']):
         try:
             run(['yt-dlp', '-x', '--audio-format', 'mp3', '--audio-quality', '0',
