@@ -1,0 +1,55 @@
+name: Ingest pending tracks (yt-dlp -> R2)
+
+# S1: the "always-on laptop". Phone queues a link -> Worker fires repository_dispatch
+# -> this runner does what the laptop used to: yt-dlp -x mp3 -> POST /api/upload.
+on:
+  repository_dispatch:
+    types: [ingest]
+  workflow_dispatch: {}   # manual "Run workflow" button also works
+
+concurrency:
+  group: ingest
+  cancel-in-progress: false
+
+jobs:
+  ingest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout (for tools/actions-ingest.py)
+        uses: actions/checkout@v4
+
+      - name: Install yt-dlp + ffmpeg
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg python3-pip
+          python3 -m pip install --user --upgrade yt-dlp
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Process pending queue
+        env:
+          SITE: ${{ vars.SITE_URL }}
+          ADMIN_EMAIL: ${{ secrets.INGEST_EMAIL }}
+          ADMIN_PASSWORD: ${{ secrets.INGEST_PASSWORD }}
+        run: |
+          set -euo pipefail
+          SITE="${SITE:-https://hedge-music-alpha.pages.dev}"
+          echo "site: $SITE"
+
+          # login (httpOnly cookie) — same as the phone app
+          curl -sS -c /tmp/cookies.txt -X POST "$SITE/api/auth" \
+            -H 'content-type: application/json' \
+            -d "{\"action\":\"login\",\"email\":\"$ADMIN_EMAIL\",\"password\":\"$ADMIN_PASSWORD\"}" \
+            -o /tmp/login.json
+          grep -q '"user"' /tmp/login.json || { echo "login failed"; cat /tmp/login.json; exit 1; }
+          echo "login ok"
+
+          # fetch pending work
+          curl -sS -b /tmp/cookies.txt "$SITE/api/ingest-pending" -o /tmp/pending.json
+          echo "pending: $(cat /tmp/pending.json | head -c 400)"
+
+          # run the ingest script (repo-root tools/actions-ingest.py)
+          python3 tools/actions-ingest.py
+
+      - name: Cleanup
+        if: always()
+        run: rm -f /tmp/ing.mp3 /tmp/cookies.txt /tmp/login.json /tmp/pending.json

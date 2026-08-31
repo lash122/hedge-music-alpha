@@ -1,5 +1,25 @@
 import { json, uuid, requireAuth, isApproved, fetchMetadata, fetchDirectAudio } from '../_utils.js';
 
+// Fire a GitHub Actions run (S1 "always-on laptop"). Requires Pages env vars:
+//   GH_PAT  — GitHub token with repo scope
+//   GH_REPO — "lash122/hedge-music-alpha"
+// Never awaited by callers: failure is silent by design.
+function pingIngest(env) {
+  try {
+    if (!env.GH_PAT || !env.GH_REPO) return;
+    fetch(`https://api.github.com/repos/${env.GH_REPO}/dispatches`, {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${env.GH_PAT}`,
+        accept: 'application/vnd.github+json',
+        'content-type': 'application/json',
+        'user-agent': 'hedge-music-ingest',
+      },
+      body: JSON.stringify({ event_type: 'ingest', client_payload: { at: Date.now() } }),
+    }).catch(() => {});
+  } catch {}
+}
+
 export async function onRequest({ request, env }) {
   if (request.method === 'OPTIONS') return new Response(null, { headers: { 'access-control-allow-origin': '*', 'access-control-allow-methods': 'GET,POST,DELETE,OPTIONS', 'access-control-allow-headers': 'content-type,authorization' } });
   const url = new URL(request.url);
@@ -79,11 +99,17 @@ export async function onRequest({ request, env }) {
       const trackId = uuid();
       await env.DB.prepare('INSERT INTO tracks(id,original_url,extractor,extractor_id,title,artist,thumbnail_url,storage_path,duration_sec,file_size,owner_id,direct_url,direct_url_fetched_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)')
         .bind(trackId, original_url, extractor, extractor_id, title, artist, thumb, storage_path, duration_sec, file_size, user.id, direct?.directUrl || null, new Date().toISOString()).run();
-      await env.DB.prepare('UPDATE ingest_queue SET status=?, extractor=?, extractor_id=? WHERE id=?').bind('done', extractor, extractor_id, id).run();
+      // S1: keep the queue row PENDING (not done) when the file never made it to R2,
+      // so the GitHub Actions runner (or laptop script) can convert it into a real MP3.
+      const hasFile = !!file_size;
+      await env.DB.prepare('UPDATE ingest_queue SET status=?, extractor=?, extractor_id=? WHERE id=?').bind(hasFile ? 'done' : 'pending', extractor, extractor_id, id).run();
+      // fire the GitHub runner (fire-and-forget, never blocks the response)
+      pingIngest(env);
       // analytics queue event
       try { await env.DB.prepare('INSERT INTO track_events(id,track_id,user_id,event,meta) VALUES(?,?,?,?,?)').bind(uuid(), trackId, user.id, 'queue', JSON.stringify({ url: original_url.slice(0, 120) })).run(); } catch {}
       const playable = !!(direct?.directUrl);
-      return json({ ok: true, queueId: id, trackId, status: 'done', title, playable });
+      const scheduled = !hasFile && !!(env.GH_PAT && env.GH_REPO);
+      return json({ ok: true, queueId: id, trackId, status: 'done', title, playable, scheduled });
     } catch (e) {
       const msg = String(e.message || e).slice(0, 500);
       await env.DB.prepare('UPDATE ingest_queue SET status=?, error=? WHERE id=?').bind('error', msg, id).run();
