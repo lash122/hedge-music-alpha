@@ -13,13 +13,14 @@ import urllib.parse
 import urllib.request
 
 SITE = os.environ.get('SITE', 'https://hedge-music-alpha.pages.dev')
+UA = 'hedge-music-ingest/1.0'  # Cloudflare 403s the default Python-urllib UA
 
 
 def login():
     body = json.dumps({'action': 'login', 'email': os.environ['ADMIN_EMAIL'],
                        'password': os.environ['ADMIN_PASSWORD']}).encode()
     req = urllib.request.Request(SITE + '/api/auth', data=body,
-                                 headers={'content-type': 'application/json'})
+                                 headers={'content-type': 'application/json', 'user-agent': UA})
     with urllib.request.urlopen(req, timeout=30) as r:
         tok = r.headers['set-cookie'].split('hm_token=')[1].split(';')[0]
     return 'hm_token=' + tok
@@ -29,7 +30,7 @@ TOKEN = login()
 
 
 def api(path, payload=None, ctype='application/json', raw=None):
-    headers = {'cookie': TOKEN}
+    headers = {'cookie': TOKEN, 'user-agent': UA}
     data_out = None
     if raw is not None:
         data_out = raw
