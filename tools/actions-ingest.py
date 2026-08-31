@@ -70,11 +70,14 @@ def yt_meta(url):
                    ['--extractor-args', 'youtube:player_client=mweb']):
         try:
             out = run(['yt-dlp', '--print-json', '--no-download', '--no-playlist',
-                       '--no-warnings'] + client + [url], timeout=120)
-            return json.loads(out.strip().splitlines()[0]), client
+                       '--no-warnings'] + client + [url], timeout=180)
+            lines = out.strip().splitlines()
+            if not lines:
+                raise RuntimeError('yt-dlp printed nothing (exit 0)')
+            return json.loads(lines[0]), client
         except Exception as e:
-            errs.append(f"{client[-1]}: {str(e)[:100]}")
-    raise RuntimeError('all clients failed: ' + ' | '.join(errs[-2:]))
+            errs.append(f"{str(client[-2:]):.40}: {str(e)[:120]}")
+    raise RuntimeError('all clients failed :: ' + ' || '.join(errs))
 
 
 def yt_download(url, client):
@@ -116,10 +119,21 @@ def main():
         return
     print(f"{len(jobs)} job(s)")
 
+    debug_shown = False
     for job in jobs:
         url = job['original_url']
         qid = job['queue_id']
         print('--- processing:', url)
+        if not debug_shown:
+            import shutil
+            print('  [debug] yt-dlp:', shutil.which('yt-dlp'))
+            print('  [debug] node:', shutil.which('node'))
+            try:
+                v = run(['yt-dlp', '--version'], timeout=30).strip()
+                print('  [debug] yt-dlp version:', v)
+            except Exception as e:
+                print('  [debug] version check failed:', str(e)[:150])
+            debug_shown = True
         f = '/tmp/ing.mp3'
         try:
             info, client = yt_meta(url)
