@@ -30,6 +30,7 @@ jobs:
           SITE: ${{ vars.SITE_URL }}
           ADMIN_EMAIL: ${{ secrets.INGEST_EMAIL }}
           ADMIN_PASSWORD: ${{ secrets.INGEST_PASSWORD }}
+          YTDLP_COOKIES_B64: ${{ secrets.YTDLP_COOKIES_B64 }}
         run: |
           set -euo pipefail
           SITE="${SITE:-https://hedge-music-alpha.pages.dev}"
@@ -52,4 +53,4 @@ jobs:
 
       - name: Cleanup
         if: always()
-        run: rm -f /tmp/ing.mp3 /tmp/cookies.txt /tmp/login.json /tmp/pending.json
+        run: rm -f /tmp/ing.mp3 /tmp/cookies.txt /tmp/yt-cookies.txt /tmp/login.json /tmp/pending.json

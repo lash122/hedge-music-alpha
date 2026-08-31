@@ -44,12 +44,28 @@ def api(path, payload=None, ctype='application/json', raw=None):
         return json.load(r)
 
 
+def cookie_args():
+    """Runner: if YTDLP_COOKIES_B64 secret exists, decode to a cookies.txt and use it.
+    Datacenter IPs are bot-walled by YouTube anonymous; a logged-in cookie jar passes."""
+    b64 = os.environ.get('YTDLP_COOKIES_B64', '')
+    if not b64:
+        return []
+    try:
+        import base64
+        with open('/tmp/yt-cookies.txt', 'wb') as f:
+            f.write(base64.b64decode(b64))
+        return ['--cookies', '/tmp/yt-cookies.txt']
+    except Exception:
+        return []
+
+
 def yt_meta(url):
-    """yt-dlp metadata with a client cascade — datacenter IPs (GitHub runners) get
-    'Sign in to confirm you're not a bot' on the default web client; alternate
-    player clients often skip that attestation."""
+    """yt-dlp metadata: cookies first, then client cascade for datacenter IPs."""
     errs = []
-    for client in (['--extractor-args', 'youtube:player_client=android'],
+    COOKIES = cookie_args()
+    for client in (COOKIES,
+                   COOKIES + ['--extractor-args', 'youtube:player_client=android'],
+                   ['--extractor-args', 'youtube:player_client=android'],
                    ['--extractor-args', 'youtube:player_client=tv'],
                    ['--extractor-args', 'youtube:player_client=mweb']):
         try:
@@ -64,7 +80,10 @@ def yt_meta(url):
 def yt_download(url, client):
     """Download audio mp3, retrying across the same client cascade."""
     base = '/tmp/ing'
-    for c in (client, ['--extractor-args', 'youtube:player_client=android'],
+    COOKIES = cookie_args()
+    for c in (client,
+              COOKIES + ['--extractor-args', 'youtube:player_client=android'],
+              ['--extractor-args', 'youtube:player_client=android'],
               ['--extractor-args', 'youtube:player_client=tv'],
               ['--extractor-args', 'youtube:player_client=mweb']):
         try:
