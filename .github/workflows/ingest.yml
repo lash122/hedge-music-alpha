@@ -25,6 +25,11 @@ jobs:
           python3 -m pip install --user --upgrade yt-dlp
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
+      - name: Install Deno (yt-dlp's default JS runtime)
+        uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+
       - name: Set up PO token provider (YouTube bot-wall bypass)
         run: |
           python3 -m pip install --user -U bgutil-ytdlp-pot-provider
