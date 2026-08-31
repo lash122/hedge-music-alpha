@@ -44,6 +44,39 @@ def api(path, payload=None, ctype='application/json', raw=None):
         return json.load(r)
 
 
+def yt_meta(url):
+    """yt-dlp metadata with a client cascade — datacenter IPs (GitHub runners) get
+    'Sign in to confirm you're not a bot' on the default web client; alternate
+    player clients often skip that attestation."""
+    errs = []
+    for client in (['-tvc', 'default'], ['--extractor-args', 'youtube:player_client=tv'],
+                   ['--extractor-args', 'youtube:player_client=web_embedded'],
+                   ['--extractor-args', 'youtube:player_client=mweb']):
+        try:
+            out = run(['yt-dlp', '--print-json', '--no-download', '--no-playlist',
+                       '--no-warnings'] + client + [url], timeout=120)
+            return json.loads(out.strip().splitlines()[0]), client
+        except Exception as e:
+            errs.append(f"{client[-1]}: {str(e)[:100]}")
+    raise RuntimeError('all clients failed: ' + ' | '.join(errs[-2:]))
+
+
+def yt_download(url, client):
+    """Download audio mp3, retrying across the same client cascade."""
+    base = '/tmp/ing'
+    for c in (client, ['--extractor-args', 'youtube:player_client=tv'],
+              ['--extractor-args', 'youtube:player_client=web_embedded'],
+              ['--extractor-args', 'youtube:player_client=mweb']):
+        try:
+            run(['yt-dlp', '-x', '--audio-format', 'mp3', '--audio-quality', '0',
+                 '--no-playlist', '--no-warnings'] + c + ['-o', f'{base}.%(ext)s', url], timeout=600)
+            if os.path.exists(f'{base}.mp3'):
+                return f'{base}.mp3'
+        except Exception:
+            continue
+    raise RuntimeError('download failed on all clients')
+
+
 def run(cmd, timeout=600):
     p = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
     if p.returncode != 0:
@@ -70,12 +103,9 @@ def main():
         print('--- processing:', url)
         f = '/tmp/ing.mp3'
         try:
-            meta_out = run(['yt-dlp', '--print-json', '--no-download', '--no-playlist',
-                            '--no-warnings', url], timeout=120)
-            info = json.loads(meta_out.strip().splitlines()[0])
+            info, client = yt_meta(url)
 
-            run(['yt-dlp', '-x', '--audio-format', 'mp3', '--audio-quality', '0',
-                 '--no-playlist', '--no-warnings', '-o', '/tmp/ing.%(ext)s', url])
+            yt_download(url, client)
             if not os.path.exists(f):
                 raise RuntimeError('mp3 not produced')
             size = os.path.getsize(f)
