@@ -122,39 +122,6 @@ def main():
         return
     print(f"{len(jobs)} job(s)")
 
-    debug_shown = False
-    for job in jobs:
-        url = job['original_url']
-        qid = job['queue_id']
-        print('--- processing:', url)
-        if not debug_shown:
-            import shutil, glob
-            print('  [debug] yt-dlp:', shutil.which('yt-dlp'))
-            print('  [debug] node:', shutil.which('node'))
-            try:
-                v = run(['yt-dlp', '--version'], timeout=30).strip()
-                print('  [debug] yt-dlp version:', v)
-            except Exception as e:
-                print('  [debug] version check failed:', str(e)[:150])
-            try:
-                import subprocess as sp
-                vv = sp.run(['yt-dlp', '-v', '--print-json', '--no-download', '--no-playlist',
-                             'https://www.youtube.com/watch?v=B4EkwueekvI'],
-                            capture_output=True, text=True, timeout=180)
-                err_lines = (vv.stderr or '').splitlines()
-                keep = [l for l in err_lines if any(k in l.lower() for k in
-                         ('pot', 'provider', 'plugin', 'token', 'bot', 'login', 'client', 'challenge', 'js runtime'))]
-                for l in keep[:25]:
-                    print('  [pot-debug]', l.strip()[:200])
-                print('  [pot-debug] exit:', vv.returncode, '| stderr lines:', len(err_lines))
-            except Exception as e:
-                print('  [pot-debug] failed:', str(e)[:150])
-            home = os.path.expanduser('~')
-            for pat in ['.local/lib/python3*/site-packages/yt_dlp_plugins*',
-                        '.local/share/yt-dlp/plugins/*',
-                        'bgutil-ytdlp-pot-provider/server/build/main.js']:
-                print('  [fs]', pat, '->', glob.glob(os.path.join(home, pat))[:3])
-            debug_shown = True
         f = '/tmp/ing.mp3'
         try:
             info, client = yt_meta(url)
