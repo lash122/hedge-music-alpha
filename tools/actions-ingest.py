@@ -14,6 +14,9 @@ import urllib.request
 
 SITE = os.environ.get('SITE', 'https://hedge-music-alpha.pages.dev')
 UA = 'hedge-music-ingest/1.0'  # Cloudflare 403s the default Python-urllib UA
+# yt-dlp 2026.08: PO-token + JS-challenge need an explicit JS runtime. Node exists on runners;
+# only deno is auto-enabled, so pass node explicitly on every call.
+JS = ['--js-runtimes', 'node']
 
 
 def login():
@@ -70,7 +73,7 @@ def yt_meta(url):
                    ['--extractor-args', 'youtube:player_client=mweb']):
         try:
             out = run(['yt-dlp', '--print-json', '--no-download', '--no-playlist',
-                       '--no-warnings'] + client + [url], timeout=180)
+                       '--no-warnings'] + JS + client + [url], timeout=180)
             lines = out.strip().splitlines()
             if not lines:
                 raise RuntimeError('yt-dlp printed nothing (exit 0)')
@@ -91,7 +94,7 @@ def yt_download(url, client):
               ['--extractor-args', 'youtube:player_client=mweb']):
         try:
             run(['yt-dlp', '-x', '--audio-format', 'mp3', '--audio-quality', '0',
-                 '--no-playlist', '--no-warnings'] + c + ['-o', f'{base}.%(ext)s', url], timeout=600)
+                 '--no-playlist', '--no-warnings'] + JS + c + ['-o', f'{base}.%(ext)s', url], timeout=600)
             if os.path.exists(f'{base}.mp3'):
                 return f'{base}.mp3'
         except Exception:
