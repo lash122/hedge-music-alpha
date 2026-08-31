@@ -122,6 +122,10 @@ def main():
         return
     print(f"{len(jobs)} job(s)")
 
+    for job in jobs:
+        url = job['original_url']
+        qid = job['queue_id']
+        print('--- processing:', url)
         f = '/tmp/ing.mp3'
         try:
             info, client = yt_meta(url)
