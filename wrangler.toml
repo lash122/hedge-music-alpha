@@ -22,3 +22,5 @@ preview_id = "f5e4f69f28474d899ca4c2084c1fea9f"
 
 [vars]
 ENV = "production"
+GH_REPO = "lash122/hedge-music-alpha"
+# GH_PAT is a SECRET — add it via Dashboard (Variables and secrets), NOT here (it would be public in the repo)
